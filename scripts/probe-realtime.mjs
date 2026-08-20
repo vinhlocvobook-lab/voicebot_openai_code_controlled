@@ -22,12 +22,38 @@
 //       ffmpeg:
 //         ffmpeg -i ghiam.m4a -ar 24000 -ac 1 -sample_fmt s16 -f wav samples/test.wav
 //
+// [20/08/2026] BIEN MOI THAM DO THEM (khong sua code, chi doi bien moi
+// truong khi chay - xem docs/fix/ de biet ly do can thu nghiem tung bien):
+//   PROBE_CREATE_RESPONSE=false   Tat tu dong sinh cau tra loi (locked
+//                                  mode giong ban cu). QUAN TRONG: khi tat,
+//                                  se KHONG co event response.done nao ca -
+//                                  script tu dong dong sau khi phat het
+//                                  audio + mot khoang cho an toan (xem
+//                                  NO_RESPONSE_GRACE_MS). Muc dich: xem khi
+//                                  nguoi noi ngung giua chung (vd doc so
+//                                  danh bo), server co tu "chot" (commit)
+//                                  buffer thanh nhieu item rieng khong, hay
+//                                  giu lien tuc cho toi khi minh chu dong
+//                                  gui response.create.
+//   PROBE_TURN_TYPE=server_vad     Doi tu semantic_vad (mac dinh) sang
+//                                  server_vad (kieu cu, dua nguong nang
+//                                  luong + khoang lang co dinh) de so sanh.
+//   PROBE_EAGERNESS=low|medium|high|auto   Chi ap dung khi TURN_TYPE la
+//                                  semantic_vad. Mac dinh "low" (giong
+//                                  production).
+//   PROBE_SILENCE_MS=500           Chi ap dung khi TURN_TYPE la server_vad:
+//                                  so ms im lang can co truoc khi coi la
+//                                  het luot noi.
+//   Vi du: PROBE_CREATE_RESPONSE=false npm run probe -- samples/2_22082351775.wav
+//
 // KET QUA: ghi ra 2 file cung ten (chi khac duoi), vd
 // logs/probe-2_22082351775-<timestamp>.jsonl (du lieu tho, moi dong mot
 // event) va logs/probe-2_22082351775-<timestamp>.txt (y het nhung gi in ra
-// man hinh - khong can tu copy/dan nua). Thu muc logs/ va samples/ KHONG
-// duoc commit len git (da chan trong .gitignore) vi co the chua noi dung
-// giong du lieu that cua khach hang.
+// man hinh - khong can tu copy/dan nua). Dong dau tien cua moi lan chay in
+// ra ca cau hinh turn_detection dang dung, de doi chieu ve sau khong can
+// nho lai da doi bien moi truong nao. Thu muc logs/ va samples/ KHONG duoc
+// commit len git (da chan trong .gitignore) vi co the chua noi dung giong
+// du lieu that cua khach hang.
 
 import "dotenv/config";
 import WebSocket from "ws";
@@ -43,13 +69,45 @@ const MODEL = process.env.OPENAI_REALTIME_MODEL || "gpt-realtime-2.1-mini";
 const TRANSCRIBE_MODEL = process.env.OPENAI_TRANSCRIBE_MODEL || "gpt-4o-transcribe";
 // [20/08/2026] Nang cap tu gpt-4o-mini-transcribe: file test doc so danh bo
 // (2_22082351775.wav, xem docs/fix/giai_doan_1_quan_sat_event_that_20260820.md)
-// tra ve transcript vo nghia "\u09B9\u09DF \u09B9\u09DF\u0964" (chu Bengal) - nghi model nho
+// tra ve transcript vo nghia "হয় হয়।" (chu Bengal) - nghi model nho
 // nhan dien nham ngon ngu voi doan audio ngan. TRANSCRIBE_LANGUAGE + prompt
 // ngu canh domain ben duoi la thu nghiem sua truc tiep loi nay.
 const TRANSCRIBE_LANGUAGE = "vi";
 const TRANSCRIBE_PROMPT = "Cuoc goi tong dai cham soc khach hang cong ty cap nuoc tai TP.HCM, " +
   "toan bo bang tieng Viet. Co the chua ma danh bo 11 chu so, so tien, " +
   "ten thu tuc: dinh muc nuoc, lap dat dong ho, sang ten, nang doi dong ho.";
+
+// [20/08/2026] Bien dieu khien turn_detection - xem chu thich dau file.
+const TURN_TYPE = process.env.PROBE_TURN_TYPE === "server_vad" ? "server_vad" : "semantic_vad";
+const CREATE_RESPONSE = process.env.PROBE_CREATE_RESPONSE !== "false";
+const EAGERNESS = process.env.PROBE_EAGERNESS || "low";
+const SILENCE_MS = Number(process.env.PROBE_SILENCE_MS || 500);
+// Khi CREATE_RESPONSE=false se khong bao gio co response.done -> khong the
+// dua vao event do de tu dong dong ket noi nhu binh thuong. Doi them
+// khoang nay sau khi phat het audio + im lang truoc khi tu dong dong, du
+// de thay het cac event input_audio_buffer.* / transcription.completed co
+// the con den tre.
+const NO_RESPONSE_GRACE_MS = 4000;
+
+function buildTurnDetection() {
+  if (TURN_TYPE === "server_vad") {
+    return {
+      type: "server_vad",
+      threshold: 0.5,
+      prefix_padding_ms: 300,
+      silence_duration_ms: SILENCE_MS,
+      create_response: CREATE_RESPONSE,
+      interrupt_response: true,
+    };
+  }
+  return {
+    type: "semantic_vad",
+    eagerness: EAGERNESS,
+    create_response: CREATE_RESPONSE,
+    interrupt_response: true,
+  };
+}
+const turnDetectionConfig = buildTurnDetection();
 
 if (!API_KEY) {
   console.error("[probe] Thieu OPENAI_API_KEY trong .env - copy tu .env.example roi dien key that.");
@@ -95,6 +153,12 @@ console.log = (...args) => _tee(_origLog, ...args);
 console.warn = (...args) => _tee(_origWarn, ...args);
 console.error = (...args) => _tee(_origError, ...args);
 
+// [20/08/2026] In cau hinh dang dung NGAY DAU log - de moi file .txt tu no
+// da du thong tin, khong can nho lai lan chay do da set bien moi truong
+// gi. Quan trong khi bat dau thu nghiem nhieu to hop PROBE_* khac nhau.
+console.log(`[probe] Cau hinh turn_detection: ${JSON.stringify(turnDetectionConfig)}`);
+console.log(`[probe] Model: ${MODEL} | Transcribe: ${TRANSCRIBE_MODEL}`);
+
 const t0 = Date.now();
 let eventCount = 0;
 const eventTally = {};
@@ -116,6 +180,16 @@ function summarize(event) {
       return JSON.stringify(event.delta ?? "").slice(0, 40);
     case "response.done":
       return `status=${event.response?.status}`;
+    case "input_audio_buffer.speech_started":
+      return `audio_start_ms=${event.audio_start_ms}`;
+    case "input_audio_buffer.speech_stopped":
+      return `audio_end_ms=${event.audio_end_ms}`;
+    case "input_audio_buffer.committed":
+      // [20/08/2026] Quan trong voi PROBE_CREATE_RESPONSE=false: moi lan
+      // event nay xuat hien la mot lan server tu "chot" buffer thanh 1
+      // item rieng - dem so lan xuat hien de biet 1 luot noi co bi tach
+      // thanh nhieu manh hay khong.
+      return `item_id=${event.item_id}, previous_item_id=${event.previous_item_id}`;
     case "error":
       return JSON.stringify(event.error ?? event).slice(0, 200);
     default:
@@ -154,12 +228,7 @@ ws.on("open", () => {
             language: TRANSCRIBE_LANGUAGE,
             prompt: TRANSCRIBE_PROMPT,
           },
-          turn_detection: {
-            type: "semantic_vad",
-            eagerness: "low",
-            create_response: true,
-            interrupt_response: true,
-          },
+          turn_detection: turnDetectionConfig,
         },
       },
     },
@@ -276,6 +345,17 @@ async function streamAudioFile(filePath) {
     await sleep(frameMs);
   }
   console.log("[probe] Da phat het file + 1.5s im lang - cho server tu phat hien ket thuc luot noi.");
+
+  if (!CREATE_RESPONSE) {
+    // [20/08/2026] create_response:false -> KHONG bao gio co response.done
+    // de tu dong trigger closeSoon() nhu binh thuong. Doi them mot khoang
+    // an toan de kip thay het cac event con den tre (vd nhieu lan
+    // input_audio_buffer.committed neu buffer bi tach lam nhieu manh) roi
+    // tu dong dong.
+    console.log(`[probe] create_response=false -> cho them ${NO_RESPONSE_GRACE_MS}ms roi tu dong dong (se khong co response.done).`);
+    await sleep(NO_RESPONSE_GRACE_MS);
+    closeSoon();
+  }
 }
 
 function sleep(ms) {
@@ -288,6 +368,7 @@ function closeSoon() {
   closing = true;
   setTimeout(() => {
     console.log("\n[probe] ===== Tom tat =====");
+    console.log(`[probe] Cau hinh turn_detection: ${JSON.stringify(turnDetectionConfig)}`);
     console.log(`[probe] Tong so event: ${eventCount}`);
     console.log("[probe] Theo loai:", eventTally);
     console.log(`[probe] Log day du (jsonl): ${logPath}`);

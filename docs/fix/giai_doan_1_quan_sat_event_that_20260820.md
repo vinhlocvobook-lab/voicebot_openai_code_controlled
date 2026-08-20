@@ -216,3 +216,75 @@ nghia, KHONG PHAI gioi han rieng cua ban mini. Quyet dinh dung
 `create_response:false` cho giai doan thu so o Giai doan 6 gio co them
 mot lop bang chung nua, DOC LAP voi viec chon model nao cho phan con lai
 cua bot - khong can doi model rieng cho giai doan nay.
+
+## Thi nghiem mo rong: create_response:false co ngan VAD tach luot noi khong? Va server_vad co kha hon semantic_vad khong? (20/08/2026, 2 model)
+
+Cau hoi con lai sau khi da xac dinh "can create_response:false cho Giai
+doan 6": khi tat create_response, VAD (`input_audio_buffer.speech_started`
+/ `speech_stopped` / `committed`) co CON tiep tuc tu tach 1 cau tra loi
+lien tuc (doc 11 so danh bo, co ngung tu nhien giua cac cum) thanh nhieu
+`conversation.item` rieng khong - hay giu nguyen 1 buffer lien tuc cho toi
+khi app chu dong gui `response.create`? Day la cau hoi kien truc cot loi
+cho `call-flow/danh-bo-collect.js`.
+
+Da sua `scripts/probe-realtime.mjs` them 2 bien moi truong
+`PROBE_CREATE_RESPONSE` va `PROBE_TURN_TYPE`/`PROBE_SILENCE_MS`, chay lai
+tren CA HAI model (`gpt-realtime-2.1` va `gpt-realtime-2.1-mini`), 2 file
+co khoang ngung that (`2_22082351775.wav`, `6_ngap_ngung.wav`).
+
+### Ket qua A - create_response:false (semantic_vad, eagerness low)
+
+| Model | File | So `input_audio_buffer.committed` | Cac manh transcript (theo thu tu) |
+| --- | --- | --- | --- |
+| gpt-realtime-2.1 | `2_22082351775.wav` | 4 | "Hai hai" -> "Khong tam" -> "Hai ba nam mot." -> "775." |
+| gpt-realtime-2.1-mini | `2_22082351775.wav` | 4 | "Hai hai" -> "Khong tam" -> "2351" -> "775." |
+| gpt-realtime-2.1 | `6_ngap_ngung.wav` | 3 | "2202" -> "3251." -> "775." |
+| gpt-realtime-2.1-mini | `6_ngap_ngung.wav` | 3 | "22002" -> "3251." -> "775" |
+
+KET LUAN QUAN TRONG NHAT: `create_response:false` KHONG ngan VAD tach luot
+noi. Moi khi nguoi noi ngung giua cac cum so, server van tu `committed`
+mot item MOI (co `previous_item_id` tro ve item truoc - server biet day
+la 1 chuoi lien tuc, nhung van la nhieu item vat ly rieng, nhieu event
+`transcription.completed` rieng). `create_response:false` CHI lam dung
+mot viec: khong tu dong sinh cau tra loi sau moi lan committed (xac nhan:
+khong co event `response.created` nao trong ca 4 lan chay nay) - con viec
+tach doan van dien ra nguyen ven, giong het khi bat create_response.
+
+=> HE QUA THIET KE CHO GIAI DOAN 6: `danh-bo-collect.js` KHONG THE coi
+"1 lan committed = 1 cau tra loi day du". Phai GOM (concat) transcript
+qua nhieu item lien tiep (dung `previous_item_id` de biet chuoi nao thuoc
+cung 1 luot thu thap) cho toi khi co tin hieu KET THUC THAT SU - vi du:
+da gom du 11 chu so (khop pattern danh bo), hoac het mot khoang im lang
+dai hon nhieu so voi khoang ngung binh thuong giua cac cum (can do dac,
+xem so lieu audio_end_ms/audio_start_ms trong log de chon nguong), hoac
+khach xac nhan bang loi/DTMF. Day la phan logic MOI can thiet ke rieng,
+chua co trong ban cu (ban cu dung watchdog+timer don gian hon vi luong
+nghiep vu don gian hon).
+
+### Ket qua B - server_vad thay semantic_vad (create_response:true, de so sanh loai VAD)
+
+| Model | silence_duration_ms | Cat o dau? | Transcript nhan duoc | response.done |
+| --- | --- | --- | --- | --- |
+| gpt-realtime-2.1 | 800 | Cum so dau tien | "Hai hai." | cancelled (barge-in khi khach noi tiep) |
+| gpt-realtime-2.1 | 1200 | Cum so dau tien (van cat) | "22" | cancelled |
+| gpt-realtime-2.1-mini | 800 | Cum so dau tien | "22" | cancelled |
+| gpt-realtime-2.1-mini | 1200 | Cum so dau tien (van cat) | "Hai hai." (transcript den SAU khi response da cancel) | cancelled |
+
+KET LUAN: tang `silence_duration_ms` len 1200ms (cao hon nhieu so voi mac
+dinh 500ms) VAN KHONG du de vuot qua khoang ngung that giua cum so dau va
+cum so thu hai trong file ghi am nay - nghia la khoang ngung thuc te dai
+hon 1200ms. Doi sang `server_vad` (kieu cu, dua nguong nang luong co
+dinh) KHONG giai quyet duoc van de, chi la doi ten co che - van bi cat y
+het `semantic_vad`. `interrupt_response:true` van hoat dong dung (huy
+response dang phat khi phat hien khach noi tiep), o ca hai loai VAD.
+
+### Ket luan chung cho Giai doan 6
+
+Khong co to hop `turn_detection` nao (loai VAD, model, nguong) tu no giai
+quyet duoc bai toan thu so danh bo co ngung tu nhien. `create_response:false`
+la BAT BUOC (dung), nhung CHUA DU mot minh - can them logic gom nhieu
+manh transcript thanh 1 cau tra loi hoan chinh o tang ung dung
+(`call-flow/danh-bo-collect.js`), dua vao `previous_item_id` de xau chuoi
+va mot dieu kien ket thuc rieng (du so chu so hoac im lang dai). Day se
+la yeu cau thiet ke ro rang khi bat dau Giai doan 6, khong con la gia
+dinh nua.
