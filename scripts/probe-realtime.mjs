@@ -22,8 +22,10 @@
 //       ffmpeg:
 //         ffmpeg -i ghiam.m4a -ar 24000 -ac 1 -sample_fmt s16 -f wav samples/test.wav
 //
-// KET QUA: toan bo event tho duoc ghi ra logs/probe-<timestamp>.jsonl (mot
-// dong JSON/event, co timestamp tuong doi). Thu muc logs/ va samples/ KHONG
+// KET QUA: ghi ra 2 file cung ten (chi khac duoi), vd
+// logs/probe-2_22082351775-<timestamp>.jsonl (du lieu tho, moi dong mot
+// event) va logs/probe-2_22082351775-<timestamp>.txt (y het nhung gi in ra
+// man hinh - khong can tu copy/dan nua). Thu muc logs/ va samples/ KHONG
 // duoc commit len git (da chan trong .gitignore) vi co the chua noi dung
 // giong du lieu that cua khach hang.
 
@@ -32,12 +34,22 @@ import WebSocket from "ws";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import util from "node:util";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const API_KEY = process.env.OPENAI_API_KEY;
 const MODEL = process.env.OPENAI_REALTIME_MODEL || "gpt-realtime-2.1-mini";
-const TRANSCRIBE_MODEL = process.env.OPENAI_TRANSCRIBE_MODEL || "gpt-4o-mini-transcribe";
+const TRANSCRIBE_MODEL = process.env.OPENAI_TRANSCRIBE_MODEL || "gpt-4o-transcribe";
+// [20/08/2026] Nang cap tu gpt-4o-mini-transcribe: file test doc so danh bo
+// (2_22082351775.wav, xem docs/fix/giai_doan_1_quan_sat_event_that_20260820.md)
+// tra ve transcript vo nghia "\u09B9\u09DF \u09B9\u09DF\u0964" (chu Bengal) - nghi model nho
+// nhan dien nham ngon ngu voi doan audio ngan. TRANSCRIBE_LANGUAGE + prompt
+// ngu canh domain ben duoi la thu nghiem sua truc tiep loi nay.
+const TRANSCRIBE_LANGUAGE = "vi";
+const TRANSCRIBE_PROMPT = "Cuoc goi tong dai cham soc khach hang cong ty cap nuoc tai TP.HCM, " +
+  "toan bo bang tieng Viet. Co the chua ma danh bo 11 chu so, so tien, " +
+  "ten thu tuc: dinh muc nuoc, lap dat dong ho, sang ten, nang doi dong ho.";
 
 if (!API_KEY) {
   console.error("[probe] Thieu OPENAI_API_KEY trong .env - copy tu .env.example roi dien key that.");
@@ -46,11 +58,42 @@ if (!API_KEY) {
 
 const audioFilePath = process.argv[2] || null;
 
+// [20/08/2026] Ten file log gan lien ten file audio dau vao - de doi chieu
+// nhieu lan chay (vd 2_22082351775.wav) khong bi lan giua cac file .jsonl
+// chi khac timestamp. Che do text (khong co audioFilePath) dung nhan "text".
+function slugifyAudioName(filePath) {
+  if (!filePath) return "text";
+  const base = path.basename(filePath, path.extname(filePath));
+  const slug = base.replace(/[^a-zA-Z0-9_-]+/g, "-").replace(/^-+|-+$/g, "");
+  return slug || "audio";
+}
+const audioSlug = slugifyAudioName(audioFilePath);
+
 // ── Chuan bi file log ────────────────────────────────────────────────────
+// [20/08/2026] Ghi kem file .txt y het nhung gi in ra man hinh (console.log/
+// warn/error) - truoc phai tu copy tu terminal, ton thoi gian doi chieu
+// nhieu lan chay. File .jsonl (du lieu tho, moi dong mot event) GIU NGUYEN.
 const logsDir = path.join(__dirname, "..", "logs");
 fs.mkdirSync(logsDir, { recursive: true });
-const logPath = path.join(logsDir, `probe-${Date.now()}.jsonl`);
+const runTimestamp = Date.now();
+const logPath = path.join(logsDir, `probe-${audioSlug}-${runTimestamp}.jsonl`);
+const txtPath = path.join(logsDir, `probe-${audioSlug}-${runTimestamp}.txt`);
 const logStream = fs.createWriteStream(logPath, { flags: "a" });
+const txtStream = fs.createWriteStream(txtPath, { flags: "a" });
+
+// Ghi de console.log/warn/error: van in ra man hinh NHU CU, dong thoi ghi
+// nguyen dong do vao file .txt. Dung util.format de giu dung dinh dang khi
+// goi console.log voi nhieu tham so (vd console.log("a:", eventTally)).
+const _origLog = console.log.bind(console);
+const _origWarn = console.warn.bind(console);
+const _origError = console.error.bind(console);
+function _tee(origFn, ...args) {
+  origFn(...args);
+  txtStream.write(util.format(...args) + "\n");
+}
+console.log = (...args) => _tee(_origLog, ...args);
+console.warn = (...args) => _tee(_origWarn, ...args);
+console.error = (...args) => _tee(_origError, ...args);
 
 const t0 = Date.now();
 let eventCount = 0;
@@ -106,7 +149,11 @@ ws.on("open", () => {
       type: "realtime",
       audio: {
         input: {
-          transcription: { model: TRANSCRIBE_MODEL },
+          transcription: {
+            model: TRANSCRIBE_MODEL,
+            language: TRANSCRIBE_LANGUAGE,
+            prompt: TRANSCRIBE_PROMPT,
+          },
           turn_detection: {
             type: "semantic_vad",
             eagerness: "low",
@@ -243,9 +290,11 @@ function closeSoon() {
     console.log("\n[probe] ===== Tom tat =====");
     console.log(`[probe] Tong so event: ${eventCount}`);
     console.log("[probe] Theo loai:", eventTally);
-    console.log(`[probe] Log day du: ${logPath}`);
+    console.log(`[probe] Log day du (jsonl): ${logPath}`);
+    console.log(`[probe] Log dang text: ${txtPath}`);
     ws.close();
     logStream.end();
+    txtStream.end();
     process.exit(0);
   }, 500);
 }

@@ -1,8 +1,45 @@
-node_modules/
-.env
-*.log
-.DS_Store
-logs/*
+
 !logs/.gitkeep
 samples/*
 !samples/.gitkeep
+
+# Dependencies
+node_modules/
+
+# Environment variables (chứa API keys – KHÔNG được commit)
+.env
+.env.local
+.env.*.local
+
+# Logs
+logs/
+logs/*
+*.log
+npm-debug.log*
+
+# Runtime
+pids/
+*.pid
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Build output (nếu có)
+dist/
+build/
+
+*.docx
+plan.md
+huongdanthutuc.md
+*.pcap
+conversation_summary/
+
+audio
+*.wav
