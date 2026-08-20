@@ -9,11 +9,15 @@ commit git rieng de de rollback.
   `src/integrations`, `src/logging`, `docs/fix`, `test`). Muc tieu: `npm
   start` chay, log ra "OK", chua ket noi gi ca.
 
-- [ ] **Giai doan 1 - Nhin tan mat luong event that.** Script doc lap
-  (khong qua Asterisk, khong qua business logic) mo WebSocket toi Realtime
-  API, gui `session.update` toi thieu, log toan bo event tho ra file. Muc
-  tieu: co file log event that, tu giai thich duoc thu tu
-  `speech_started -> speech_stopped -> committed -> transcription.completed`.
+- [~] **Giai doan 1 - Nhin tan mat luong event that.** Script
+  `scripts/probe-realtime.mjs` da viet xong (khong qua Asterisk, khong qua
+  business logic) - mo WebSocket thuan toi Realtime API, gui
+  `session.update` giong het "normal mode" cua production, log toan bo
+  event tho ra `logs/probe-*.jsonl`. CHUA CHAY THU (can OPENAI_API_KEY that
+  + mang that, ca hai deu khong co trong moi truong dieu khien tu xa - phai
+  tu chay tren may that). Chi danh dau [x] xong khi da tu chay va tu giai
+  thich duoc thu tu `speech_started -> speech_stopped -> committed ->
+  transcription.completed` tu log that.
 
 - [ ] **Giai doan 2 - `src/session/turn-signal.js`.** Ham thuan: input la
   event tho (lay tu fixture cua Giai doan 1), output la object luot chuan
