@@ -8,7 +8,8 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node --watch server.js",
-    "probe": "node scripts/probe-realtime.mjs"
+    "probe": "node scripts/probe-realtime.mjs",
+    "test": "node --test"
   },
   "dependencies": {
     "dotenv": "^16.4.5",

@@ -18,9 +18,14 @@ commit git rieng de de rollback.
   quyet dinh duoc. Chi tiet + du lieu doi chieu: xem
   `docs/fix/giai_doan_1_quan_sat_event_that_20260820.md`.
 
-- [ ] **Giai doan 2 - `src/session/turn-signal.js`.** Ham thuan: input la
-  event tho (lay tu fixture cua Giai doan 1), output la object luot chuan
-  hoa. Test bang cach replay fixture, khong can goi OpenAI that.
+- [x] **Giai doan 2 - `src/session/turn-signal.js`.** Ham thuan
+  `normalizeTurnEvent(rawEvent)`: nhan 1 event tho, tra ve object
+  `{kind, ...}` da chuan hoa (speech-started/stopped, buffer-committed
+  co previousItemId, transcript-ready, response-started/ended, error,
+  ignored). Test o `test/turn-signal.test.mjs`, replay fixture
+  `test/fixtures/turn-signal-events.jsonl` (dang giong log that cua
+  Giai doan 1) bang `node --test` (npm run test) - khong goi OpenAI
+  that. 5/5 test pass.
 
 - [ ] **Giai doan 3 - `src/session/turn-controller.js`.** Cua duy nhat gui
   `response.create`/`cancel`, API toi gian `say({mode, text|instructions|

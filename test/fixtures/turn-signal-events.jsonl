@@ -1,0 +1,18 @@
+{"elapsedMs":0,"direction":"out","event":{"type":"session.update","session":{"type":"realtime"}}}
+{"elapsedMs":10,"direction":"in","event":{"type":"session.created"}}
+{"elapsedMs":220,"direction":"in","event":{"type":"session.updated"}}
+{"elapsedMs":3100,"direction":"in","event":{"type":"input_audio_buffer.speech_started","audio_start_ms":1164}}
+{"elapsedMs":4763,"direction":"in","event":{"type":"input_audio_buffer.speech_stopped","audio_end_ms":3260}}
+{"elapsedMs":4764,"direction":"in","event":{"type":"input_audio_buffer.committed","item_id":"item_AAA111","previous_item_id":null}}
+{"elapsedMs":5122,"direction":"in","event":{"type":"conversation.item.input_audio_transcription.completed","item_id":"item_AAA111","transcript":"Hai hai"}}
+{"elapsedMs":5791,"direction":"in","event":{"type":"input_audio_buffer.speech_started","audio_start_ms":3692}}
+{"elapsedMs":8207,"direction":"in","event":{"type":"input_audio_buffer.speech_stopped","audio_end_ms":5780}}
+{"elapsedMs":8208,"direction":"in","event":{"type":"input_audio_buffer.committed","item_id":"item_BBB222","previous_item_id":"item_AAA111"}}
+{"elapsedMs":8522,"direction":"in","event":{"type":"conversation.item.input_audio_transcription.completed","item_id":"item_BBB222","transcript":"Khong tam"}}
+{"elapsedMs":8600,"direction":"out","event":{"type":"response.create","response":{}}}
+{"elapsedMs":8650,"direction":"in","event":{"type":"response.created","response":{"id":"resp_CCC333"}}}
+{"elapsedMs":9200,"direction":"in","event":{"type":"response.done","response":{"id":"resp_CCC333","status":"completed"}}}
+{"elapsedMs":9300,"direction":"in","event":{"type":"response.created","response":{"id":"resp_DDD444"}}}
+{"elapsedMs":9350,"direction":"in","event":{"type":"input_audio_buffer.speech_started","audio_start_ms":6900}}
+{"elapsedMs":9400,"direction":"in","event":{"type":"response.done","response":{"id":"resp_DDD444","status":"cancelled"}}}
+{"elapsedMs":9500,"direction":"in","event":{"type":"error","error":{"type":"invalid_request_error","message":"vi du loi mau de test nhanh error"}}}
