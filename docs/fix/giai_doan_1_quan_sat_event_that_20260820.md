@@ -183,3 +183,36 @@ dung `semantic_vad` (du eagerness thap) cho giai doan doc so - can
 hang thuc te se dung giua cac cum so (hoan toan tu nhien khi doc day 11
 chu so), va thi nghiem nay chung minh VAD khong the doi qua nhung khoang
 dung do mot cach dang tin cay du eagerness da la muc thap nhat.
+
+## So sanh model: gpt-realtime-2.1-mini vs gpt-realtime-2.1 (20/08/2026)
+
+Chay lai TOAN BO cac file test (1, 2, 2_lienmach + noise1-5, 3, 4, 6) voi
+`OPENAI_REALTIME_MODEL=gpt-realtime-2.1` (ban day du, thay vi mini) - chi
+doi bien moi truong, khong sua code (script da doc model tu env san).
+
+| File | mini - cat som? | day du - cat som? |
+| --- | --- | --- |
+| `1_hoa_don...wav` | Khong, tron ven | Khong, tron ven |
+| `2_22082351775.wav` (co khoang ngung) | CO (+5506ms) -> "Hai hai" | CO, con som hon (+4805ms) -> "Hai hai" |
+| `2_..._lienmach.wav` (lien mach, sach - file moi) | (chua test voi mini) | CAT NHE (+7359ms, thieu ~1s cuoi) -> "2202 3251 77" (thieu so cuoi) |
+| `2_..._lienmach_noise1/2/3.wav` | Khong, tron ven ca 3 | Khong, tron ven ca 3 (transcript chinh xac hon mot chut) |
+| `2_..._lienmach_noise4.wav` | Cat gan cuoi + cancel | Cat gan cuoi + cancel (giong het pattern) |
+| `2_..._lienmach_noise5.wav` (on nang) | VAD khong nhan ra loi noi | VAD khong nhan ra loi noi (giong het) |
+| `3_ngap_ngung.wav` | Khong, tron ven | Khong, tron ven |
+| `4_tap_am.wav` | Khong kich hoat (dung) | Khong kich hoat (dung) |
+| `6_ngap_ngung.wav` (co ngung) | CO (+4919ms) -> "202002" | CO (+4798ms) -> "2022022" |
+
+KET LUAN: doi sang `gpt-realtime-2.1` (ban day du) KHONG giai quyet duoc
+van de cat som. Ca hai file "kho" (co khoang ngung that) van bi cat o CA
+HAI model - ban day du con cat file 2 SOM HON mot chut (4805ms so voi
+5506ms cua mini). Dang chu y hon: file `lienmach.wav` moi (doc lien mach,
+sach, khong tap am) - kich ban le ra "de" nhat - cung bi cat mat so cuoi
+voi ban day du.
+
+=> Cung co them (khong lam lung lay) ket luan truoc: khong the tin
+`semantic_vad` (du model nao) se luon doi dung ranh gioi luot noi khi co
+khoang ngung tu nhien trong loi noi - day la gioi han cua co che VAD ngu
+nghia, KHONG PHAI gioi han rieng cua ban mini. Quyet dinh dung
+`create_response:false` cho giai doan thu so o Giai doan 6 gio co them
+mot lop bang chung nua, DOC LAP voi viec chon model nao cho phan con lai
+cua bot - khong can doi model rieng cho giai doan nay.
