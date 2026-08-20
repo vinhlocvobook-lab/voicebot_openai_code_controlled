@@ -288,3 +288,73 @@ manh transcript thanh 1 cau tra loi hoan chinh o tang ung dung
 va mot dieu kien ket thuc rieng (du so chu so hoac im lang dai). Day se
 la yeu cau thiet ke ro rang khi bat dau Giai doan 6, khong con la gia
 dinh nua.
+
+## Thi nghiem C: tat han VAD server (turn_detection:null), tu commit buffer 1 lan (20/08/2026, 2 model)
+
+Y tuong: neu VAD (ca semantic_vad lan server_vad) la nguyen nhan tach luot
+noi thanh nhieu manh (xem thi nghiem A/B o tren), thu tat han no di - app
+tu quyet dinh khi nao "chot" (commit) buffer, khong de server tu doan.
+Sua `scripts/probe-realtime.mjs` them `PROBE_TURN_TYPE=none`
+(`turn_detection: null`): script phat het audio (ca doan co ngung) roi tu
+gui `input_audio_buffer.commit` DUNG MOT LAN, sau do tuy chon co goi
+`response.create` thu cong hay khong.
+
+Chay tren ca 2 model, 2 file co khoang ngung that, ca 2 truong hop
+create_response false/true:
+
+| Model | File | create_response | So lan `committed` | Transcript (MOT manh duy nhat) |
+| --- | --- | --- | --- | --- |
+| gpt-realtime-2.1-mini | `2_22082351775.wav` | false | 1 | "2208 23 51 77 5" |
+| gpt-realtime-2.1-mini | `2_22082351775.wav` | true | 1 | "220823515775" |
+| gpt-realtime-2.1-mini | `6_ngap_ngung.wav` | false | 1 | "2202 3251 775" |
+| gpt-realtime-2.1 | `2_22082351775.wav` | false | 1 | "22082351775" |
+| gpt-realtime-2.1 | `2_22082351775.wav` | true | 1 | "2208 23 51 77 5" |
+| gpt-realtime-2.1 | `6_ngap_ngung.wav` | false | 1 | "220203251775" |
+
+KET QUA: CA 6/6 LAN CHAY chi co DUNG MOT `input_audio_buffer.committed`
+va DUNG MOT `conversation.item.input_audio_transcription.completed` -
+KHONG con bi tach thanh nhieu manh nua, du audio co khoang ngung tu nhien
+giua cac cum so dai bao nhieu. Day la khac biet ro rang so voi thi
+nghiem A (cung 2 file nay, cung 2 model, nhung dung VAD thi bi tach 3-4
+manh).
+
+=> XAC NHAN: nguyen nhan goc re cua viec tach luot noi la co che VAD
+(server tu quyet dinh diem cat), KHONG PHAI ban than Realtime API hay
+model. Khi app tu kiem soat hoan toan thoi diem commit (`turn_detection:
+null`), server chi transcribe NGUYEN VAN nhung gi co trong buffer tai
+thoi diem commit - kể ca khoang ngung ben trong.
+
+RUI RO CON LAI (khong lien quan toi tach luot noi, la chat luong nhan
+dang giong noi thuan tuy): transcript doi khi lech 1 chu so so voi thuc
+te du la 1 manh duy nhat - vd cung 1 nguoi doc, ban `create_response:true`
+cua mini tra ve "220823515775" (12 chu so, du 22082351775 chi co 11), ban
+full/`6_ngap_ngung` tra ve "220203251775" (cung du 1 so). Day la loi cua
+model transcribe (`gpt-4o-transcribe`), khong phai loi tach luot - can co
+co che xac nhan lai voi khach (doc lai so vua nhan de khach xac nhan
+dung/sai) o Giai doan 6, khong the tin 100% transcript dau vao.
+
+DANH DOI can luu y: khi tat VAD hoan toan, KHONG con `interrupt_response`
+tu dong nao ca (khong co VAD nao de phat hien khach noi tiep giua chung
+ma huy response) - ca 2 lan create_response:true deu ket thuc binh thuong
+`response.done status=completed`, khong co lan nao bi `cancelled`. Voi
+"locked mode" (dang doc so, muon khach doc het khong bi ngat) day la
+DIEU MONG MUON, khong phai nhuoc diem.
+
+### Ket luan cuoi cung cho kien truc Giai doan 6
+
+Doi lai de xuat truoc (gom nhieu manh transcript qua `previous_item_id`):
+CACH DON GIAN VA CHAC CHAN HON la dung `turn_detection: null` cho ca giai
+doan thu thap ma danh bo, roi TU APP (khong phai VAD cua OpenAI) quyet
+dinh khi nao commit - vi du dua vao: da nhan du so khung PCM tuong ung
+voi ~X giay (uoc luong thoi gian doc 11 so), hoac tu theo doi nang luong
+am thanh tho (buffer da yen lang lien tuc Y giay) o tang audiosocket
+truoc khi goi `input_audio_buffer.commit`. Nho do:
+- Luon nhan duoc DUNG MOT transcript cho ca cau tra loi, khong can logic
+  gom/xau chuoi nhieu item.
+- Khong co nguy co bi `interrupt_response` huy response giua chung.
+- Nhuoc diem duy nhat: mat luon co che "server tu phat hien nguoi noi
+  xong" - app phai tu lam viec nay (co the don gian: cho toi khi audio
+  buffer tho lien tuc yen lang qua 1 nguong, hoac cho het thoi luong toi
+  da hop ly).
+- Van can co buoc "xac nhan lai danh bo voi khach" o Giai doan 6 vi
+  transcript co the lech 1 chu so ngay ca khi khong bi tach luot noi.

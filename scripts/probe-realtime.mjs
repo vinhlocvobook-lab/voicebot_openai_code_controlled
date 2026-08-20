@@ -25,26 +25,31 @@
 // [20/08/2026] BIEN MOI THAM DO THEM (khong sua code, chi doi bien moi
 // truong khi chay - xem docs/fix/ de biet ly do can thu nghiem tung bien):
 //   PROBE_CREATE_RESPONSE=false   Tat tu dong sinh cau tra loi (locked
-//                                  mode giong ban cu). QUAN TRONG: khi tat,
-//                                  se KHONG co event response.done nao ca -
-//                                  script tu dong dong sau khi phat het
+//                                  mode giong ban cu). Khi TURN_TYPE khac
+//                                  "none": KHONG co event response.done nao
+//                                  ca - script tu dong dong sau khi phat het
 //                                  audio + mot khoang cho an toan (xem
-//                                  NO_RESPONSE_GRACE_MS). Muc dich: xem khi
-//                                  nguoi noi ngung giua chung (vd doc so
-//                                  danh bo), server co tu "chot" (commit)
-//                                  buffer thanh nhieu item rieng khong, hay
-//                                  giu lien tuc cho toi khi minh chu dong
-//                                  gui response.create.
+//                                  NO_RESPONSE_GRACE_MS). Khi TURN_TYPE la
+//                                  "none": dieu khien co goi response.create
+//                                  thu cong sau khi tu commit hay khong.
 //   PROBE_TURN_TYPE=server_vad     Doi tu semantic_vad (mac dinh) sang
 //                                  server_vad (kieu cu, dua nguong nang
 //                                  luong + khoang lang co dinh) de so sanh.
+//   PROBE_TURN_TYPE=none           [20/08/2026] TAT HAN VAD server
+//                                  (turn_detection:null). Khong co
+//                                  speech_started/speech_stopped/committed
+//                                  tu dong nao ca - script tu phat het audio
+//                                  roi TU MINH gui input_audio_buffer.commit
+//                                  (mot lan duy nhat) de xem co giai quyet
+//                                  duoc van de VAD tu tach luot noi thanh
+//                                  nhieu manh khi co khoang ngung khong.
 //   PROBE_EAGERNESS=low|medium|high|auto   Chi ap dung khi TURN_TYPE la
 //                                  semantic_vad. Mac dinh "low" (giong
 //                                  production).
 //   PROBE_SILENCE_MS=500           Chi ap dung khi TURN_TYPE la server_vad:
 //                                  so ms im lang can co truoc khi coi la
 //                                  het luot noi.
-//   Vi du: PROBE_CREATE_RESPONSE=false npm run probe -- samples/2_22082351775.wav
+//   Vi du: PROBE_TURN_TYPE=none PROBE_CREATE_RESPONSE=false npm run probe -- samples/2_22082351775.wav
 //
 // KET QUA: ghi ra 2 file cung ten (chi khac duoi), vd
 // logs/probe-2_22082351775-<timestamp>.jsonl (du lieu tho, moi dong mot
@@ -69,27 +74,36 @@ const MODEL = process.env.OPENAI_REALTIME_MODEL || "gpt-realtime-2.1-mini";
 const TRANSCRIBE_MODEL = process.env.OPENAI_TRANSCRIBE_MODEL || "gpt-4o-transcribe";
 // [20/08/2026] Nang cap tu gpt-4o-mini-transcribe: file test doc so danh bo
 // (2_22082351775.wav, xem docs/fix/giai_doan_1_quan_sat_event_that_20260820.md)
-// tra ve transcript vo nghia "হয় হয়।" (chu Bengal) - nghi model nho
-// nhan dien nham ngon ngu voi doan audio ngan. TRANSCRIBE_LANGUAGE + prompt
-// ngu canh domain ben duoi la thu nghiem sua truc tiep loi nay.
+// tra ve transcript vo nghia chu Bengal - nghi model nho nhan dien nham
+// ngon ngu voi doan audio ngan. TRANSCRIBE_LANGUAGE + prompt ngu canh domain
+// ben duoi la thu nghiem sua truc tiep loi nay.
 const TRANSCRIBE_LANGUAGE = "vi";
 const TRANSCRIBE_PROMPT = "Cuoc goi tong dai cham soc khach hang cong ty cap nuoc tai TP.HCM, " +
   "toan bo bang tieng Viet. Co the chua ma danh bo 11 chu so, so tien, " +
   "ten thu tuc: dinh muc nuoc, lap dat dong ho, sang ten, nang doi dong ho.";
 
 // [20/08/2026] Bien dieu khien turn_detection - xem chu thich dau file.
-const TURN_TYPE = process.env.PROBE_TURN_TYPE === "server_vad" ? "server_vad" : "semantic_vad";
+const TURN_TYPE = ["server_vad", "none"].includes(process.env.PROBE_TURN_TYPE)
+  ? process.env.PROBE_TURN_TYPE
+  : "semantic_vad";
 const CREATE_RESPONSE = process.env.PROBE_CREATE_RESPONSE !== "false";
 const EAGERNESS = process.env.PROBE_EAGERNESS || "low";
 const SILENCE_MS = Number(process.env.PROBE_SILENCE_MS || 500);
-// Khi CREATE_RESPONSE=false se khong bao gio co response.done -> khong the
-// dua vao event do de tu dong dong ket noi nhu binh thuong. Doi them
-// khoang nay sau khi phat het audio + im lang truoc khi tu dong dong, du
-// de thay het cac event input_audio_buffer.* / transcription.completed co
-// the con den tre.
+// Khi khong co response.done tu dong (CREATE_RESPONSE=false, hoac
+// TURN_TYPE=none ma khong goi response.create thu cong) -> khong the dua
+// vao event do de tu dong dong ket noi nhu binh thuong. Doi them khoang
+// nay de kip thay het cac event con den tre roi tu dong dong.
 const NO_RESPONSE_GRACE_MS = 4000;
 
 function buildTurnDetection() {
+  if (TURN_TYPE === "none") {
+    // [20/08/2026] Tat han VAD phia server - app (o day la script probe)
+    // tu quan ly toan bo: tu quyet dinh khi nao commit buffer, khi nao
+    // goi response.create. Xem docs/fix/ - thu nghiem xem cach nay co
+    // tranh duoc viec VAD tu tach 1 luot noi co khoang ngung thanh nhieu
+    // item rieng hay khong.
+    return null;
+  }
   if (TURN_TYPE === "server_vad") {
     return {
       type: "server_vad",
@@ -337,6 +351,24 @@ async function streamAudioFile(filePath) {
     const chunk = data.subarray(i, i + frameBytes);
     send({ type: "input_audio_buffer.append", audio: chunk.toString("base64") });
     await sleep(frameMs);
+  }
+
+  if (TURN_TYPE === "none") {
+    // [20/08/2026] Khong co VAD server -> khong co gi tu dong ca. Tu minh
+    // chot (commit) buffer MOT LAN DUY NHAT sau khi phat het audio, roi
+    // (neu duoc yeu cau) tu minh goi response.create. Muc dich: xem 1 luot
+    // noi lien tuc (co khoang ngung tu nhien ben trong) co con bi tach
+    // thanh nhieu conversation.item nhu khi de VAD tu quyet dinh khong.
+    console.log("[probe] turn_detection=null - KHONG co VAD server, tu minh commit buffer (1 lan).");
+    send({ type: "input_audio_buffer.commit" });
+    if (CREATE_RESPONSE) {
+      send({ type: "response.create", response: {} });
+    } else {
+      console.log(`[probe] create_response=false (thu cong) -> cho them ${NO_RESPONSE_GRACE_MS}ms roi tu dong dong.`);
+      await sleep(NO_RESPONSE_GRACE_MS);
+      closeSoon();
+    }
+    return;
   }
 
   const silenceFrame = Buffer.alloc(frameBytes);
