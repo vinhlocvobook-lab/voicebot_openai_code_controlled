@@ -1,308 +1,354 @@
-# Giai doan 1 - Quan sat luong event that (20/08/2026)
+# Giai đoạn 1 - Quan sát luồng event thật (20/08/2026)
 
-## Muc dich
+## Tóm tắt hiện trạng (cập nhật 21/08/2026 - đọc trước khi đọc chi tiết bên dưới)
 
-Truoc khi viet `turn-signal.js`/`turn-controller.js` (Giai doan 2-3), can tu
-mat thay thu tu event thuc te tu OpenAI Realtime API - khong doc lai code cu
-suy doan. Dung `scripts/probe-realtime.mjs`: mo WebSocket thuan (khong qua
-Asterisk/SIP, khong qua business logic), cau hinh giong het "normal mode"
-cua production (`semantic_vad`, `eagerness:"low"`, `create_response:true`,
-`interrupt_response:true`, transcription `gpt-4o-mini-transcribe`), phat 5
-file audio test rieng biet, log toan bo event ra `logs/probe-*.jsonl` + ban
-console.log duoc luu lai o `logs/probe-*.txt`.
+File này được viết TUẦN TỰ theo thời gian, có vài kết luận giữa chừng sau đó bị sửa lại (đúng thói quen `docs/fix/` - giữ lại lịch sử suy luận). Muốn biết kết luận ĐANG ÁP DỤNG, đọc tóm tắt này thay vì đọc tuần tự:
 
-## Ket qua tung file
+1. `semantic_vad`/`server_vad` (dù model nào, dù chỉnh ngưỡng nào) đều KHÔNG đợi được qua khoảng ngừng tự nhiên giữa các cụm số khi đọc danh bộ - xác nhận bằng thực nghiệm nhiều lần.
+2. `create_response:false` (locked mode) là bắt buộc cho giai đoạn thu số, nhưng KHÔNG tự nó ngăn VAD tách 1 lượt đọc thành nhiều `conversation.item` - code vẫn phải tự gom nhiều mảnh.
+3. `turn_detection: null` (tự app commit) giải quyết triệt để việc bị tách mảnh - NHƯNG chỉ kiểm chứng được ở kịch bản KHÔNG dùng SIP (app tự append audio). Dự án sản xuất CHỈ dùng SIP + 1 WebSocket control-plane, Node không có audio thô để tự làm việc này - nên hướng này KHÔNG dùng được cho bản sản xuất (xem `docs/roadmap.md` mục "Ràng buộc kiến trúc").
+4. Vì (3) không dùng được, Giai đoạn 6 quay lại hướng gom nhiều mảnh transcript qua `previous_item_id` (Phương án A) hoặc để model tự thu thập + code đối chiếu (Phương án B) - xem `docs/roadmap.md` Giai đoạn 6 để biết chi tiết 2 phương án.
+5. Transcript (`gpt-4o-transcribe`) có thể lệch 1 chữ số ngay cả khi không bị tách mảnh - luôn cần bước đọc lại xác nhận với khách, không tin 100% transcript đầu vào.
 
-**1. `1_hoa_don_tien_nuoc_24k.wav` (5.72s, cau hoi thuong)**
-Chuoi event chuan: `speech_started(+3511ms) -> speech_stopped(+7681ms) ->
+## Mục đích
+
+Trước khi viết `turn-signal.js`/`turn-controller.js` (Giai đoạn 2-3), cần tận
+mắt thấy thứ tự event thực tế từ OpenAI Realtime API - không đọc lại code cũ
+suy đoán. Dùng `scripts/probe-realtime.mjs`: mở WebSocket thuần (không qua
+Asterisk/SIP, không qua business logic), cấu hình giống hệt "normal mode"
+của production (`semantic_vad`, `eagerness:"low"`, `create_response:true`,
+`interrupt_response:true`, transcription `gpt-4o-mini-transcribe`), phát 5
+file audio test riêng biệt, log toàn bộ event ra `logs/probe-*.jsonl` + bản
+console.log được lưu lại ở `logs/probe-*.txt`.
+
+## Kết quả từng file
+
+**1. `1_hoa_don_tien_nuoc_24k.wav` (5.72s, câu hỏi thường)**
+Chuỗi event chuẩn: `speech_started(+3511ms) -> speech_stopped(+7681ms) ->
 committed -> conversation.item.added/done -> response.created ->
-response.output_audio.delta... -> response.done`. Transcript khop dung
-100% cau da doc. Dung lam baseline doi chieu voi cac file sau.
+response.output_audio.delta... -> response.done`. Transcript khớp đúng
+100% câu đã đọc. Dùng làm baseline đối chiếu với các file sau.
 
-**2. `2_22082351775.wav` (16.88s, doc day so danh bo)**
-`speech_started` o +3917ms nhung `speech_stopped`/`committed` chot NGAY o
-+5582ms - chi ~1.6 giay audio duoc commit (uoc luong chi khoang 2 so dau).
-Transcript tra ve: `"হয় হয়।"` - chu Bengal vo nghia, dau hieu ro rang cua
-mot doan audio bi cat qua ngan bi nhan dien sai. Ngay sau do (+6606ms) co
-`speech_started` LAN HAI (khach van dang doc tiep) nhung script dong ket
-noi sau `response.done` dau tien nen khong bat duoc phan con lai.
+**2. `2_22082351775.wav` (16.88s, đọc dãy số danh bộ)**
+`speech_started` ở +3917ms nhưng `speech_stopped`/`committed` chốt NGAY ở
++5582ms - chỉ ~1.6 giây audio được commit (ước lượng chỉ khoảng 2 số đầu).
+Transcript trả về: `"হয় হয়।"` - chữ Bengal vô nghĩa, dấu hiệu rõ ràng của
+một đoạn audio bị cắt quá ngắn bị nhận diện sai. Ngay sau đó (+6606ms) có
+`speech_started` LẦN HAI (khách vẫn đang đọc tiếp) nhưng script đóng kết
+nối sau `response.done` đầu tiên nên không bắt được phần còn lại.
 
-=> TAI HIEN DUNG loai loi ma `session-ws.js` ban cu tung vo hang chuc lan
-("model doc so bay ra khong dung, VAD cat mat so giua chung" - xem comment
-[MUC C - dot 5] trong file do). Day la bang chung THAT, tu tay tao ra
-duoc, khong con la suy doan tu log san xuat nua.
+=> TÁI HIỆN ĐÚNG loại lỗi mà `session-ws.js` bản cũ từng vấp hàng chục lần
+("model đọc số bay ra không đúng, VAD cắt mất số giữa chừng" - xem comment
+[MỨC C - đợt 5] trong file đó). Đây là bằng chứng THẬT, tự tay tạo ra
+được, không còn là suy đoán từ log sản xuất nữa.
 
-**3. `3_ngap_ngung.wav` (16.44s, cung day so nhung co ngap ngung dau cau)**
-`speech_started` o +3215ms, `speech_stopped` DOI toi +17857ms (~14.6 giay
-audio lien tuc). Transcript ve DUNG NGUYEN VAN: `"À, để anh xem, số danh
+**3. `3_ngap_ngung.wav` (16.44s, cùng dãy số nhưng có ngập ngừng đầu câu)**
+`speech_started` ở +3215ms, `speech_stopped` ĐỢI tới +17857ms (~14.6 giây
+audio liên tục). Transcript về ĐÚNG NGUYÊN VĂN: `"À, để anh xem, số danh
 bộ là 2208-2351-775"`.
 
-=> Cung mot day so, cung co yeu to "ngap ngung", nhung LAN NAY VAD khong
-cat giua chung. Gia thuyet: KHONG PHAI su ngap ngung lam VAD cat som, ma
-la KHOANG NGUNG THAT (im lang) giua cac cum so. File 3 co the da doc lien
-mach (ke ca phan "À để anh xem" cung la loi noi lien tuc, khong phai im
-lang), con file 2 nhieu kha nang co nhung khoang dung giua cac cum so du
-dai de `semantic_vad (eagerness:low)` coi la het luot.
+=> Cùng một dãy số, cùng có yếu tố "ngập ngừng", nhưng LẦN NÀY VAD không
+cắt giữa chừng. Giả thuyết: KHÔNG PHẢI sự ngập ngừng làm VAD cắt sớm, mà
+là KHOẢNG NGỪNG THẬT (im lặng) giữa các cụm số. File 3 có thể đã đọc liền
+mạch (kể cả phần "À để anh xem" cũng là lời nói liên tục, không phải im
+lặng), còn file 2 nhiều khả năng có những khoảng dừng giữa các cụm số đủ
+dài để `semantic_vad (eagerness:low)` coi là hết lượt.
 
-CAN XAC NHAN LAI voi nguoi ghi am: luc doc file 2, co dung han (im lang)
-giua cac cum so hay doc lien mot hoi? Day se la du lieu nen tang de thiet
-ke `turn_detection` cho `call-flow/danh-bo-collect.js` (Giai doan 6).
+CẦN XÁC NHẬN LẠI với người ghi âm: lúc đọc file 2, có dừng hẳn (im lặng)
+giữa các cụm số hay đọc liền một hơi? Đây sẽ là dữ liệu nền tảng để thiết
+kế `turn_detection` cho `call-flow/danh-bo-collect.js` (Giai đoạn 6).
 
-**4. `4_tap_am.wav` (5.85s, tap am nen, khong noi gi)**
-Khong co `speech_started` nao xuat hien trong suot ~5.85s phat + 1.5s im
-lang them vao - phai Ctrl+C moi thoat duoc (script chua co timeout khi
-khong phat hien luot noi nao - han che cua `probe-realtime.mjs`, khong
-phai hanh vi VAD). Tin tot: o `eagerness:"low"`, tap am nen KHONG kich
-hoat nham `speech_started` trong lan thu nay.
+**4. `4_tap_am.wav` (5.85s, tạp âm nền, không nói gì)**
+Không có `speech_started` nào xuất hiện trong suốt ~5.85s phát + 1.5s im
+lặng thêm vào - phải Ctrl+C mới thoát được (script chưa có timeout khi
+không phát hiện lượt nói nào - hạn chế của `probe-realtime.mjs`, không
+phải hành vi VAD). Tin tốt: ở `eagerness:"low"`, tạp âm nền KHÔNG kích
+hoạt nhầm `speech_started` trong lần thử này.
 
-**5. Smoke test bang text (khong audio)**
-Chay dung nhu thiet ke, xac nhan ket noi/cau hinh session hoat dong tot
-truoc khi thu audio that.
+**5. Smoke test bằng text (không audio)**
+Chạy đúng như thiết kế, xác nhận kết nối/cấu hình session hoạt động tốt
+trước khi thử audio thật.
 
-## Phat hien quan trong nhat: transcript ve SAU khi response da bat dau
+## Phát hiện quan trọng nhất: transcript về SAU khi response đã bắt đầu
 
-O ca file 2 va file 3, event `conversation.item.input_audio_transcription
-.completed` den SAU `response.created` va XEN GIUA cac
-`response.output_audio.delta` - tuc la model da bat dau tao cau tra loi
-(dua tren audio tho no tu nghe) TRUOC KHI transcript text ma minh doc duoc
-kip xuat hien.
+Ở cả file 2 và file 3, event `conversation.item.input_audio_transcription
+.completed` đến SAU `response.created` và XEN GIỮA các
+`response.output_audio.delta` - tức là model đã bắt đầu tạo câu trả lời
+(dựa trên audio thô nó tự nghe) TRƯỚC KHI transcript text mà mình đọc được
+kịp xuất hiện.
 
-=> Xac nhan bang THUC NGHIEM dieu da ghi trong project memory
-(`voicebot-transcript-debug-only.md`): transcript CHI de debug, KHONG phai
-thu model dung de quyet dinh - model quyet dinh dua tren audio tho no tu
-nghe, transcript la mot luong song song CHAM HON, chi de code (va nguoi)
-quan sat.
+=> Xác nhận bằng THỰC NGHIỆM điều đã ghi trong project memory
+(`voicebot-transcript-debug-only.md`): transcript CHỈ để debug, KHÔNG phải
+thứ model dùng để quyết định - model quyết định dựa trên audio thô nó tự
+nghe, transcript là một luồng song song CHẬM HƠN, chỉ để code (và người)
+quan sát.
 
-## Ket luan / viec can lam tiep
+## Kết luận / việc cần làm tiếp
 
-1. Xac nhan lai voi nguoi ghi am ve cach doc file 2 (dung han giua cac
-   cum so hay khong) - se quyet dinh cach dien giai gia thuyet o tren.
-2. Khi thiet ke `call-flow/danh-bo-collect.js` (Giai doan 6): khong the
-   dua vao `semantic_vad` mac dinh cho giai doan doc so - dung y het ly
-   do ban cu da chuyen sang `create_response:false` ("locked mode") cho
-   giai doan nay. Gio da co bang chung tu tay tai hien, khong con la
-   "nghe noi vay".
-3. `probe-realtime.mjs` can them timeout an toan (vd 20s khong co
-   `speech_started` thi tu dong` -> chua sua, dang cho quyet dinh co lam
-   luon o Giai doan 1 hay de sau.
-4. Diem 2 (transcript den sau response.created) can duoc phan anh vao
-   thiet ke `turn-signal.js` (Giai doan 2): module nay KHONG duoc dung de
-   quyet dinh "model co nen noi khong" (qua muon, response da chay roi) -
-   chi dung de LOG/quan sat va cho cac quyet dinh KHONG lien quan toi tao
-   response (vd dem so, phat hien tu khoa xac nhan/phu dinh sau khi
-   response da xong).
+1. Xác nhận lại với người ghi âm về cách đọc file 2 (dừng hẳn giữa các
+   cụm số hay không) - sẽ quyết định cách diễn giải giả thuyết ở trên.
+2. Khi thiết kế `call-flow/danh-bo-collect.js` (Giai đoạn 6): không thể
+   dựa vào `semantic_vad` mặc định cho giai đoạn đọc số - đúng ý hệt lý
+   do bản cũ đã chuyển sang `create_response:false` ("locked mode") cho
+   giai đoạn này. Giờ đã có bằng chứng tự tay tái hiện, không còn là
+   "nghe nói vậy".
+3. `probe-realtime.mjs` cần thêm timeout an toàn (vd 20s không có
+   `speech_started` thì tự đóng) -> chưa sửa, đang chờ quyết định có làm
+   luôn ở Giai đoạn 1 hay để sau.
+4. Điểm 2 (transcript đến sau response.created) cần được phản ánh vào
+   thiết kế `turn-signal.js` (Giai đoạn 2): module này KHÔNG được dùng để
+   quyết định "model có nên nói không" (quá muộn, response đã chạy rồi) -
+   chỉ dùng để LOG/quan sát và cho các quyết định KHÔNG liên quan tới tạo
+   response (vd đếm số, phát hiện từ khoá xác nhận/phủ định sau khi
+   response đã xong).
 
-## Du lieu goc
+## Bổ sung 21/08/2026: ràng buộc SIP-only làm Thí nghiệm C không áp dụng được cho bản sản xuất
 
-`logs/probe-*.jsonl` (khong commit len git - da chan trong `.gitignore`).
+Đã đối chiếu với code thật của bản sản xuất (`voice_bot/src/session-ws.js`,
+`call-manager.js`) VÀ xác nhận lại với chủ dự án: dự án CHỈ dùng SIP
+(OpenAI Realtime Calls API) + 1 WebSocket control-plane, KHÔNG dùng
+AudioSocket. `session-ws.js` KHÔNG có lần gọi `input_audio_buffer.append`
+hay `.commit` nào - audio đi thẳng từ SIP trunk vào OpenAI, Node chỉ nghe
+event.
 
-## Dinh chinh (bo sung sau khi trao doi voi nguoi ghi am)
+`scripts/probe-realtime.mjs` (nguồn của kết luận Thí nghiệm C bên dưới -
+"tắt hẳn VAD, app tự commit") mở MỘT WebSocket THUẦN, KHÔNG qua SIP, và
+TỰ NÓ append audio rồi tự gọi commit - nó đóng vai nguồn audio. Đây là
+điểm khác biệt then chốt: kết luận "turn_detection:null + app tự commit
+giải quyết triệt để" MỚI CHỈ được kiểm chứng NGOÀI SIP. Với kiến trúc SIP-
+only thật sự, còn 2 câu hỏi CHƯA có câu trả lời:
 
-Gia thuyet "khoang ngung giua cac cum so" o tren CHUA DU CAN CU. Nguoi ghi
-am cho biet: file 2 co tap am o DOAN CUOI, file 3 KHONG co tap am. Hai file
-dang khac nhau o NHIEU bien cung luc (co/khong tap am, co/khong cau dan "A
-de anh xem", co the ca cach ngat nhip doc so) - khong tach duoc bien nao
-la nguyen nhan that su.
+1. `input_audio_buffer.commit` do Node gọi trên một session SIP (audio
+   đến từ trunk, không phải do Node append) có tác dụng gì không - hay
+   OpenAI coi buffer đó luôn rỗng vì Node chưa từng append gì?
+2. Kể cả commit có tác dụng, Node lấy tín hiệu "khách đã ngừng nói" ở đâu
+   để biết LÚC NÀO gọi commit - không còn VAD server (đã tắt), không có
+   audio thô cục bộ (AudioSocket không dùng)?
 
-Luu y: tap am o doan cuoi file 2 (16.88s) kho giai thich duoc lan cat som
-o +5582ms (chi ~1.6s sau khi bat dau noi) - qua xa thoi diem tap am cuoi
-file. Nen tap am cuoi file kho la thu pham TRUC TIEP cua lan cat som do,
-nhung van co the la mot bien gay nhieu khac (vd anh huong toi
-`speech_started` lan hai o +6606ms).
+=> KẾT LUẬN CUỐI CÙNG của Thí nghiệm C ("tắt VAD là hướng đơn giản và
+chắc chắn hơn") CẦN SỬA LẠI thành: "...trong điều kiện có audio thô cục
+bộ (vd qua AudioSocket)". Với ràng buộc SIP-only thật sự của dự án, hướng
+khả thi là quay lại kết quả của Thí nghiệm A (gom nhiều mảnh transcript
+qua `previous_item_id` ở tầng ứng dụng) - xem `docs/roadmap.md` Giai đoạn
+6, Phương án A. Xem chi tiết ràng buộc và 2 phương án đề xuất (A: kế thừa
+hướng Thí nghiệm A; B: model tự thu thập + code đối chiếu transcript) ở
+`docs/roadmap.md`.
 
-=> CAN TEST LAI voi bien duoc tach rieng - 3 file moi, moi file chi doi
-DUNG MOT bien so voi baseline:
-- `5_so_lien_mach_sach.wav`: doc mot day so (bia) LIEN MACH, phong yen
-  tinh, khong cau dan.
-- `6_so_ngat_quang_sach.wav`: CUNG day so do, dung ~0.7-1s giua moi cum
-  2-3 so, phong yen tinh, khong cau dan. (So sanh truc tiep voi file 5 -
-  chi khac dung mot bien: co/khong khoang ngung.)
-- `7_so_lien_mach_co_tap_am.wav`: doc lien mach nhu file 5, nhung co tap
-  am nen suot luc ghi. (Tach rieng anh huong cua tap am khoi khoang
-  ngung.)
+## Dữ liệu gốc
 
-Chua chay - dang cho nguoi ghi am chuan bi 3 file nay.
+`logs/probe-*.jsonl` (không commit lên git - đã chặn trong `.gitignore`).
 
-## Cap nhat 20/08/2026 (2): doi transcription model
+## Đính chính (bổ sung sau khi trao đổi với người ghi âm)
 
-Ap dung thay doi transcription config (`scripts/probe-realtime.mjs`):
-`gpt-4o-mini-transcribe` -> `gpt-4o-transcribe`, them `language: "vi"` +
-`prompt` ngu canh domain (dung y het doan config ma du an ban cu da dung
-cho SIP, co ly do rieng - xem comment trong file).
+Giả thuyết "khoảng ngừng giữa các cụm số" ở trên CHƯA ĐỦ CĂN CỨ. Người ghi
+âm cho biết: file 2 có tạp âm ở ĐOẠN CUỐI, file 3 KHÔNG có tạp âm. Hai file
+đang khác nhau ở NHIỀU biến cùng lúc (có/không tạp âm, có/không câu dẫn "À
+để anh xem", có thể cả cách ngắt nhịp đọc số) - không tách được biến nào
+là nguyên nhân thật sự.
 
-QUAN TRONG: thay doi nay CHI nam trong `audio.input.transcription`, HOAN
-TOAN TACH BIET khoi `audio.input.turn_detection` (VAD). Dung tinh than
-phat hien o tren (transcript chi de debug, khong anh huong luc model
-quyet dinh noi) - doi transcription model KHONG lam thay doi thoi diem
+Lưu ý: tạp âm ở đoạn cuối file 2 (16.88s) khó giải thích được lần cắt sớm
+ở +5582ms (chỉ ~1.6s sau khi bắt đầu nói) - quá xa thời điểm tạp âm cuối
+file. Nên tạp âm cuối file khó là thủ phạm TRỰC TIẾP của lần cắt sớm đó,
+nhưng vẫn có thể là một biến gây nhiễu khác (vd ảnh hưởng tới
+`speech_started` lần hai ở +6606ms).
+
+=> CẦN TEST LẠI với biến được tách riêng - 3 file mới, mỗi file chỉ đổi
+ĐÚNG MỘT biến so với baseline:
+- `5_so_lien_mach_sach.wav`: đọc một dãy số (bịa) LIÊN MẠCH, phòng yên
+  tĩnh, không câu dẫn.
+- `6_so_ngat_quang_sach.wav`: CÙNG dãy số đó, dừng ~0.7-1s giữa mỗi cụm
+  2-3 số, phòng yên tĩnh, không câu dẫn. (So sánh trực tiếp với file 5 -
+  chỉ khác đúng một biến: có/không khoảng ngừng.)
+- `7_so_lien_mach_co_tap_am.wav`: đọc liền mạch như file 5, nhưng có tạp
+  âm nền suốt lúc ghi. (Tách riêng ảnh hưởng của tạp âm khỏi khoảng
+  ngừng.)
+
+Chưa chạy - đang chờ người ghi âm chuẩn bị 3 file này.
+
+## Cập nhật 20/08/2026 (2): đổi transcription model
+
+Áp dụng thay đổi transcription config (`scripts/probe-realtime.mjs`):
+`gpt-4o-mini-transcribe` -> `gpt-4o-transcribe`, thêm `language: "vi"` +
+`prompt` ngữ cảnh domain (dùng ý hệt đoạn config mà dự án bản cũ đã dùng
+cho SIP, có lý do riêng - xem comment trong file).
+
+QUAN TRỌNG: thay đổi này CHỈ nằm trong `audio.input.transcription`, HOÀN
+TOÀN TÁCH BIỆT khỏi `audio.input.turn_detection` (VAD). Đúng tinh thần
+phát hiện ở trên (transcript chỉ để debug, không ảnh hưởng lúc model
+quyết định nói) - đổi transcription model KHÔNG làm thay đổi thời điểm
 `speech_started`/`speech_stopped`/`committed`/`response.created`.
 
-=> KHONG can chay lai 3 file kiem chung VAD (5/6/7) vi doi nay. Nhung NEN
-chay lai dung file `2_22082351775.wav` (file da cho transcript vo nghia
-"হয় হয়।") voi config moi, xem \`gpt-4o-transcribe\`
-+ \`language:"vi"\` + prompt domain co sua duoc loi phien am sai ngon ngu
-do hay khong - day la mot truc quan sat khac (chat luong transcript),
-doc lap voi truc VAD-cat-som o tren.
+=> KHÔNG cần chạy lại 3 file kiểm chứng VAD (5/6/7) vì đổi này. Nhưng NÊN
+chạy lại đúng file `2_22082351775.wav` (file đã cho transcript vô nghĩa
+"হয় হয়।") với config mới, xem `gpt-4o-transcribe`
++ `language:"vi"` + prompt domain có sửa được lỗi phiên âm sai ngôn ngữ
+đó hay không - đây là một trục quan sát khác (chất lượng transcript),
+độc lập với trục VAD-cắt-sớm ở trên.
 
-## Ket luan cuoi cung (20/08/2026, sau khi test lai co kiem soat bien)
+## Kết luận cuối cùng (20/08/2026, sau khi test lại có kiểm soát biến)
 
-Da chay 7 file: `2_22082351775.wav` (doc lai, model transcription moi),
-`6_ngap_ngung.wav`, va 5 file `..._lienmach_noise{1..5}.wav` (doc lien mach
-+ tap am o cac muc do khac nhau). Ket qua (so goc `22082351775`, 11 chu so):
+Đã chạy 7 file: `2_22082351775.wav` (đọc lại, model transcription mới),
+`6_ngap_ngung.wav`, và 5 file `..._lienmach_noise{1..5}.wav` (đọc liền mạch
++ tạp âm ở các mức độ khác nhau). Kết quả (số gốc `22082351775`, 11 chữ số):
 
-| File | Kieu doc | Tap am | Bi cat som? | Transcript |
+| File | Kiểu đọc | Tạp âm | Bị cắt sớm? | Transcript |
 | --- | --- | --- | --- | --- |
-| `2_22082351775.wav` | co khoang ngung | khong | CO (+5506ms, ~1.7s) | "Hai hai" |
-| `6_ngap_ngung.wav` | ngap ngung, co ngung | khong | CO (+4919ms, ~2.5s) | "202002" |
-| `..._lienmach_noise1.wav` | lien mach | co | Khong (+9972ms, tron ven) | "2202 3251 775." |
-| `..._lienmach_noise2.wav` | lien mach | co | Khong (+10227ms, tron ven) | "2202 3251 7755" |
-| `..._lienmach_noise3.wav` | lien mach | co | Khong (+10182ms, tron ven) | "2202 3251 7755" |
-| `..._lienmach_noise4.wav` | lien mach | co (on hon?) | Cat gan cuoi + response bi cancel | "22020325077575" (garbled) |
-| `..._lienmach_noise5.wav` | lien mach | co (on nhat?) | VAD KHONG nhan ra loi noi - phai Ctrl+C | (khong co) |
+| `2_22082351775.wav` | có khoảng ngừng | không | CÓ (+5506ms, ~1.7s) | "Hai hai" |
+| `6_ngap_ngung.wav` | ngập ngừng, có ngừng | không | CÓ (+4919ms, ~2.5s) | "202002" |
+| `..._lienmach_noise1.wav` | liền mạch | có | Không (+9972ms, trọn vẹn) | "2202 3251 775." |
+| `..._lienmach_noise2.wav` | liền mạch | có | Không (+10227ms, trọn vẹn) | "2202 3251 7755" |
+| `..._lienmach_noise3.wav` | liền mạch | có | Không (+10182ms, trọn vẹn) | "2202 3251 7755" |
+| `..._lienmach_noise4.wav` | liền mạch | có (ồn hơn?) | Cắt gần cuối + response bị cancel | "22020325077575" (garbled) |
+| `..._lienmach_noise5.wav` | liền mạch | có (ồn nhất?) | VAD KHÔNG nhận ra lời nói - phải Ctrl+C | (không có) |
 
-KET LUAN: dung nhu gia thuyet ban dau - KHOANG NGUNG GIUA CAC CUM SO la
-nguyen nhan khien `semantic_vad (eagerness:low)` cat som, KHONG PHAI tap
-am (3/5 file co tap am van doi tron ven het cau). Doi transcription model
-(`gpt-4o-transcribe`) KHONG sua duoc viec cat som (dung du doan - day la
-hai co che doc lap), nhung CO sua duoc trieu chung "chu la vo nghia":
-transcript cua doan bi cat lan nay la "Hai hai" (dung tieng Viet) thay vi
-"হয় হয়।" (chu Bengal) nhu truoc khi doi model.
+KẾT LUẬN: đúng như giả thuyết ban đầu - KHOẢNG NGỪNG GIỮA CÁC CỤM SỐ là
+nguyên nhân khiến `semantic_vad (eagerness:low)` cắt sớm, KHÔNG PHẢI tạp
+âm (3/5 file có tạp âm vẫn đợi trọn vẹn hết câu). Đổi transcription model
+(`gpt-4o-transcribe`) KHÔNG sửa được việc cắt sớm (đúng dự đoán - đây là
+hai cơ chế độc lập), nhưng CÓ sửa được triệu chứng "chữ là vô nghĩa":
+transcript của đoạn bị cắt lần này là "Hai hai" (đúng tiếng Việt) thay vì
+"হয় হয়।" (chữ Bengal) như trước khi đổi model.
 
-PHAT HIEN PHU: file `noise5` lo ra loi NGUOC LAI - tap am qua lon khien
-VAD khong nhan ra co nguoi dang noi, bot se im lang vo thoi han neu khong
-co luoi an toan. Day la ly do watchdog (Giai doan 7) khong the bo qua.
+PHÁT HIỆN PHỤ: file `noise5` lộ ra lỗi NGƯỢC LẠI - tạp âm quá lớn khiến
+VAD không nhận ra có người đang nói, bot sẽ im lặng vô thời hạn nếu không
+có lưới an toàn. Đây là lý do watchdog (Giai đoạn 7) không thể bỏ qua.
 
-PHAT HIEN PHU 2: moi lan VAD cat som, he thong sinh `response.created`
-roi gan nhu ngay sau do bi `response.done status="cancelled"` (do
-`interrupt_response:true` phat hien khach van dang noi tiep) - co che
-ngat hoat dong dung thiet ke, nhung trong luong doc so that se nghe nhu
-bot bi "giat" giua chung.
+PHÁT HIỆN PHỤ 2: mỗi lần VAD cắt sớm, hệ thống sinh `response.created`
+rồi gần như ngay sau đó bị `response.done status="cancelled"` (do
+`interrupt_response:true` phát hiện khách vẫn đang nói tiếp) - cơ chế
+ngắt hoạt động đúng thiết kế, nhưng trong luồng đọc số thật sẽ nghe như
+bot bị "giật" giữa chừng.
 
-=> AP DUNG CHO GIAI DOAN 6 (`call-flow/danh-bo-collect.js`): khong the
-dung `semantic_vad` (du eagerness thap) cho giai doan doc so - can
-`create_response:false` (locked mode, dung y het huong ban cu) VI khach
-hang thuc te se dung giua cac cum so (hoan toan tu nhien khi doc day 11
-chu so), va thi nghiem nay chung minh VAD khong the doi qua nhung khoang
-dung do mot cach dang tin cay du eagerness da la muc thap nhat.
+=> ÁP DỤNG CHO GIAI ĐOẠN 6 (`call-flow/danh-bo-collect.js`): không thể
+dùng `semantic_vad` (dù eagerness thấp) cho giai đoạn đọc số - cần
+`create_response:false` (locked mode, đúng ý hệt hướng bản cũ) VÌ khách
+hàng thực tế sẽ dừng giữa các cụm số (hoàn toàn tự nhiên khi đọc dãy 11
+chữ số), và thí nghiệm này chứng minh VAD không thể đợi qua những khoảng
+dừng đó một cách đáng tin cậy dù eagerness đã là mức thấp nhất.
 
-## So sanh model: gpt-realtime-2.1-mini vs gpt-realtime-2.1 (20/08/2026)
+## So sánh model: gpt-realtime-2.1-mini vs gpt-realtime-2.1 (20/08/2026)
 
-Chay lai TOAN BO cac file test (1, 2, 2_lienmach + noise1-5, 3, 4, 6) voi
-`OPENAI_REALTIME_MODEL=gpt-realtime-2.1` (ban day du, thay vi mini) - chi
-doi bien moi truong, khong sua code (script da doc model tu env san).
+Chạy lại TOÀN BỘ các file test (1, 2, 2_lienmach + noise1-5, 3, 4, 6) với
+`OPENAI_REALTIME_MODEL=gpt-realtime-2.1` (bản đầy đủ, thay vì mini) - chỉ
+đổi biến môi trường, không sửa code (script đã đọc model từ env sẵn).
 
-| File | mini - cat som? | day du - cat som? |
+| File | mini - cắt sớm? | đầy đủ - cắt sớm? |
 | --- | --- | --- |
-| `1_hoa_don...wav` | Khong, tron ven | Khong, tron ven |
-| `2_22082351775.wav` (co khoang ngung) | CO (+5506ms) -> "Hai hai" | CO, con som hon (+4805ms) -> "Hai hai" |
-| `2_..._lienmach.wav` (lien mach, sach - file moi) | (chua test voi mini) | CAT NHE (+7359ms, thieu ~1s cuoi) -> "2202 3251 77" (thieu so cuoi) |
-| `2_..._lienmach_noise1/2/3.wav` | Khong, tron ven ca 3 | Khong, tron ven ca 3 (transcript chinh xac hon mot chut) |
-| `2_..._lienmach_noise4.wav` | Cat gan cuoi + cancel | Cat gan cuoi + cancel (giong het pattern) |
-| `2_..._lienmach_noise5.wav` (on nang) | VAD khong nhan ra loi noi | VAD khong nhan ra loi noi (giong het) |
-| `3_ngap_ngung.wav` | Khong, tron ven | Khong, tron ven |
-| `4_tap_am.wav` | Khong kich hoat (dung) | Khong kich hoat (dung) |
-| `6_ngap_ngung.wav` (co ngung) | CO (+4919ms) -> "202002" | CO (+4798ms) -> "2022022" |
+| `1_hoa_don...wav` | Không, trọn vẹn | Không, trọn vẹn |
+| `2_22082351775.wav` (có khoảng ngừng) | CÓ (+5506ms) -> "Hai hai" | CÓ, còn sớm hơn (+4805ms) -> "Hai hai" |
+| `2_..._lienmach.wav` (liền mạch, sạch - file mới) | (chưa test với mini) | CẮT NHẸ (+7359ms, thiếu ~1s cuối) -> "2202 3251 77" (thiếu số cuối) |
+| `2_..._lienmach_noise1/2/3.wav` | Không, trọn vẹn cả 3 | Không, trọn vẹn cả 3 (transcript chính xác hơn một chút) |
+| `2_..._lienmach_noise4.wav` | Cắt gần cuối + cancel | Cắt gần cuối + cancel (giống hệt pattern) |
+| `2_..._lienmach_noise5.wav` (ồn nặng) | VAD không nhận ra lời nói | VAD không nhận ra lời nói (giống hệt) |
+| `3_ngap_ngung.wav` | Không, trọn vẹn | Không, trọn vẹn |
+| `4_tap_am.wav` | Không kích hoạt (đúng) | Không kích hoạt (đúng) |
+| `6_ngap_ngung.wav` (có ngừng) | CÓ (+4919ms) -> "202002" | CÓ (+4798ms) -> "2022022" |
 
-KET LUAN: doi sang `gpt-realtime-2.1` (ban day du) KHONG giai quyet duoc
-van de cat som. Ca hai file "kho" (co khoang ngung that) van bi cat o CA
-HAI model - ban day du con cat file 2 SOM HON mot chut (4805ms so voi
-5506ms cua mini). Dang chu y hon: file `lienmach.wav` moi (doc lien mach,
-sach, khong tap am) - kich ban le ra "de" nhat - cung bi cat mat so cuoi
-voi ban day du.
+KẾT LUẬN: đổi sang `gpt-realtime-2.1` (bản đầy đủ) KHÔNG giải quyết được
+vấn đề cắt sớm. Cả hai file "khó" (có khoảng ngừng thật) vẫn bị cắt ở CẢ
+HAI model - bản đầy đủ còn cắt file 2 SỚM HƠN một chút (4805ms so với
+5506ms của mini). Đáng chú ý hơn: file `lienmach.wav` mới (đọc liền mạch,
+sạch, không tạp âm) - kịch bản lẽ ra "dễ" nhất - cũng bị cắt mất số cuối
+với bản đầy đủ.
 
-=> Cung co them (khong lam lung lay) ket luan truoc: khong the tin
-`semantic_vad` (du model nao) se luon doi dung ranh gioi luot noi khi co
-khoang ngung tu nhien trong loi noi - day la gioi han cua co che VAD ngu
-nghia, KHONG PHAI gioi han rieng cua ban mini. Quyet dinh dung
-`create_response:false` cho giai doan thu so o Giai doan 6 gio co them
-mot lop bang chung nua, DOC LAP voi viec chon model nao cho phan con lai
-cua bot - khong can doi model rieng cho giai doan nay.
+=> Củng cố thêm (không làm lung lay) kết luận trước: không thể tin
+`semantic_vad` (dù model nào) sẽ luôn đợi đúng ranh giới lượt nói khi có
+khoảng ngừng tự nhiên trong lời nói - đây là giới hạn của cơ chế VAD ngữ
+nghĩa, KHÔNG PHẢI giới hạn riêng của bản mini. Quyết định dùng
+`create_response:false` cho giai đoạn thu số ở Giai đoạn 6 giờ có thêm
+một lớp bằng chứng nữa, ĐỘC LẬP với việc chọn model nào cho phần còn lại
+của bot - không cần đổi model riêng cho giai đoạn này.
 
-## Thi nghiem mo rong: create_response:false co ngan VAD tach luot noi khong? Va server_vad co kha hon semantic_vad khong? (20/08/2026, 2 model)
+## Thí nghiệm mở rộng: create_response:false có ngăn VAD tách lượt nói không? Và server_vad có khá hơn semantic_vad không? (20/08/2026, 2 model)
 
-Cau hoi con lai sau khi da xac dinh "can create_response:false cho Giai
-doan 6": khi tat create_response, VAD (`input_audio_buffer.speech_started`
-/ `speech_stopped` / `committed`) co CON tiep tuc tu tach 1 cau tra loi
-lien tuc (doc 11 so danh bo, co ngung tu nhien giua cac cum) thanh nhieu
-`conversation.item` rieng khong - hay giu nguyen 1 buffer lien tuc cho toi
-khi app chu dong gui `response.create`? Day la cau hoi kien truc cot loi
+Câu hỏi còn lại sau khi đã xác định "cần create_response:false cho Giai
+đoạn 6": khi tắt create_response, VAD (`input_audio_buffer.speech_started`
+/ `speech_stopped` / `committed`) có CÒN tiếp tục tự tách 1 câu trả lời
+liên tục (đọc 11 số danh bộ, có ngừng tự nhiên giữa các cụm) thành nhiều
+`conversation.item` riêng không - hay giữ nguyên 1 buffer liên tục cho tới
+khi app chủ động gửi `response.create`? Đây là câu hỏi kiến trúc cốt lõi
 cho `call-flow/danh-bo-collect.js`.
 
-Da sua `scripts/probe-realtime.mjs` them 2 bien moi truong
-`PROBE_CREATE_RESPONSE` va `PROBE_TURN_TYPE`/`PROBE_SILENCE_MS`, chay lai
-tren CA HAI model (`gpt-realtime-2.1` va `gpt-realtime-2.1-mini`), 2 file
-co khoang ngung that (`2_22082351775.wav`, `6_ngap_ngung.wav`).
+Đã sửa `scripts/probe-realtime.mjs` thêm 2 biến môi trường
+`PROBE_CREATE_RESPONSE` và `PROBE_TURN_TYPE`/`PROBE_SILENCE_MS`, chạy lại
+trên CẢ HAI model (`gpt-realtime-2.1` và `gpt-realtime-2.1-mini`), 2 file
+có khoảng ngừng thật (`2_22082351775.wav`, `6_ngap_ngung.wav`).
 
-### Ket qua A - create_response:false (semantic_vad, eagerness low)
+### Kết quả A - create_response:false (semantic_vad, eagerness low)
 
-| Model | File | So `input_audio_buffer.committed` | Cac manh transcript (theo thu tu) |
+| Model | File | Số `input_audio_buffer.committed` | Các mảnh transcript (theo thứ tự) |
 | --- | --- | --- | --- |
-| gpt-realtime-2.1 | `2_22082351775.wav` | 4 | "Hai hai" -> "Khong tam" -> "Hai ba nam mot." -> "775." |
-| gpt-realtime-2.1-mini | `2_22082351775.wav` | 4 | "Hai hai" -> "Khong tam" -> "2351" -> "775." |
+| gpt-realtime-2.1 | `2_22082351775.wav` | 4 | "Hai hai" -> "Không tám" -> "Hai ba năm một." -> "775." |
+| gpt-realtime-2.1-mini | `2_22082351775.wav` | 4 | "Hai hai" -> "Không tám" -> "2351" -> "775." |
 | gpt-realtime-2.1 | `6_ngap_ngung.wav` | 3 | "2202" -> "3251." -> "775." |
 | gpt-realtime-2.1-mini | `6_ngap_ngung.wav` | 3 | "22002" -> "3251." -> "775" |
 
-KET LUAN QUAN TRONG NHAT: `create_response:false` KHONG ngan VAD tach luot
-noi. Moi khi nguoi noi ngung giua cac cum so, server van tu `committed`
-mot item MOI (co `previous_item_id` tro ve item truoc - server biet day
-la 1 chuoi lien tuc, nhung van la nhieu item vat ly rieng, nhieu event
-`transcription.completed` rieng). `create_response:false` CHI lam dung
-mot viec: khong tu dong sinh cau tra loi sau moi lan committed (xac nhan:
-khong co event `response.created` nao trong ca 4 lan chay nay) - con viec
-tach doan van dien ra nguyen ven, giong het khi bat create_response.
+**Số liệu tham khảo cho ngưỡng "khoảng lặng dài hơn giữa các cụm" (Phương án A, Giai đoạn 6):** đo trực tiếp từ log thí nghiệm này (`audio_end_ms` của lần `speech_stopped` trước, so với `audio_start_ms` của lần `speech_started` kế tiếp) - khoảng ngừng GIỮA CÁC CỤM SỐ trong 2 file test dao động khoảng **416ms - 1348ms** (cả 2 model, cả 2 file). Đây là số đo từ `semantic_vad` (không phải năng lượng âm thanh thô), chỉ mang tính tham khảo ban đầu - nhưng đáng lưu ý: khoảng dừng CUỐI CÂU thật (khi khách đã đọc xong) có thể KHÔNG dài hơn nhiều so với khoảng dừng GIỮA các cụm số (cùng một người, cùng một nhịp thở) - chỉ dựa vào độ dài im lặng để phân biệt "đang dừng giữa chừng" và "đã nói xong" có thể KHÔNG đủ tin cậy một mình, nên ưu tiên tín hiệu "đã đủ 11 chữ số" làm điều kiện kết thúc chính, im lặng dài chỉ là lưới an toàn phụ.
 
-=> HE QUA THIET KE CHO GIAI DOAN 6: `danh-bo-collect.js` KHONG THE coi
-"1 lan committed = 1 cau tra loi day du". Phai GOM (concat) transcript
-qua nhieu item lien tiep (dung `previous_item_id` de biet chuoi nao thuoc
-cung 1 luot thu thap) cho toi khi co tin hieu KET THUC THAT SU - vi du:
-da gom du 11 chu so (khop pattern danh bo), hoac het mot khoang im lang
-dai hon nhieu so voi khoang ngung binh thuong giua cac cum (can do dac,
-xem so lieu audio_end_ms/audio_start_ms trong log de chon nguong), hoac
-khach xac nhan bang loi/DTMF. Day la phan logic MOI can thiet ke rieng,
-chua co trong ban cu (ban cu dung watchdog+timer don gian hon vi luong
-nghiep vu don gian hon).
+KẾT LUẬN QUAN TRỌNG NHẤT: `create_response:false` KHÔNG ngăn VAD tách lượt
+nói. Mỗi khi người nói ngừng giữa các cụm số, server vẫn tự `committed`
+một item MỚI (có `previous_item_id` trỏ về item trước - server biết đây
+là 1 chuỗi liên tục, nhưng vẫn là nhiều item vật lý riêng, nhiều event
+`transcription.completed` riêng). `create_response:false` CHỈ làm đúng
+một việc: không tự động sinh câu trả lời sau mỗi lần committed (xác nhận:
+không có event `response.created` nào trong cả 4 lần chạy này) - còn việc
+tách đoạn vẫn diễn ra nguyên vẹn, giống hệt khi bật create_response.
 
-### Ket qua B - server_vad thay semantic_vad (create_response:true, de so sanh loai VAD)
+=> HỆ QUẢ THIẾT KẾ CHO GIAI ĐOẠN 6: `danh-bo-collect.js` KHÔNG THỂ coi
+"1 lần committed = 1 câu trả lời đầy đủ". Phải GOM (concat) transcript
+qua nhiều item liên tiếp (dùng `previous_item_id` để biết chuỗi nào thuộc
+cùng 1 lượt thu thập) cho tới khi có tín hiệu KẾT THÚC THẬT SỰ - ví dụ:
+đã gom đủ 11 chữ số (khớp pattern danh bộ), hoặc hết một khoảng im lặng
+dài hơn nhiều so với khoảng ngừng bình thường giữa các cụm (cần đo đạc,
+xem số liệu audio_end_ms/audio_start_ms trong log để chọn ngưỡng), hoặc
+khách xác nhận bằng lời/DTMF. Đây là phần logic MỚI cần thiết kế riêng,
+chưa có trong bản cũ (bản cũ dùng watchdog+timer đơn giản hơn vì luồng
+nghiệp vụ đơn giản hơn).
 
-| Model | silence_duration_ms | Cat o dau? | Transcript nhan duoc | response.done |
+### Kết quả B - server_vad thay semantic_vad (create_response:true, để so sánh loại VAD)
+
+| Model | silence_duration_ms | Cắt ở đâu? | Transcript nhận được | response.done |
 | --- | --- | --- | --- | --- |
-| gpt-realtime-2.1 | 800 | Cum so dau tien | "Hai hai." | cancelled (barge-in khi khach noi tiep) |
-| gpt-realtime-2.1 | 1200 | Cum so dau tien (van cat) | "22" | cancelled |
-| gpt-realtime-2.1-mini | 800 | Cum so dau tien | "22" | cancelled |
-| gpt-realtime-2.1-mini | 1200 | Cum so dau tien (van cat) | "Hai hai." (transcript den SAU khi response da cancel) | cancelled |
+| gpt-realtime-2.1 | 800 | Cụm số đầu tiên | "Hai hai." | cancelled (barge-in khi khách nói tiếp) |
+| gpt-realtime-2.1 | 1200 | Cụm số đầu tiên (vẫn cắt) | "22" | cancelled |
+| gpt-realtime-2.1-mini | 800 | Cụm số đầu tiên | "22" | cancelled |
+| gpt-realtime-2.1-mini | 1200 | Cụm số đầu tiên (vẫn cắt) | "Hai hai." (transcript đến SAU khi response đã cancel) | cancelled |
 
-KET LUAN: tang `silence_duration_ms` len 1200ms (cao hon nhieu so voi mac
-dinh 500ms) VAN KHONG du de vuot qua khoang ngung that giua cum so dau va
-cum so thu hai trong file ghi am nay - nghia la khoang ngung thuc te dai
-hon 1200ms. Doi sang `server_vad` (kieu cu, dua nguong nang luong co
-dinh) KHONG giai quyet duoc van de, chi la doi ten co che - van bi cat y
-het `semantic_vad`. `interrupt_response:true` van hoat dong dung (huy
-response dang phat khi phat hien khach noi tiep), o ca hai loai VAD.
+KẾT LUẬN: tăng `silence_duration_ms` lên 1200ms (cao hơn nhiều so với mặc
+định 500ms) VẪN KHÔNG đủ để vượt qua khoảng ngừng thật giữa cụm số đầu và
+cụm số thứ hai trong file ghi âm này - nghĩa là khoảng ngừng thực tế dài
+hơn 1200ms. Đổi sang `server_vad` (kiểu cũ, dựa ngưỡng năng lượng cố
+định) KHÔNG giải quyết được vấn đề, chỉ là đổi tên cơ chế - vẫn bị cắt y
+hệt `semantic_vad`. `interrupt_response:true` vẫn hoạt động đúng (huỷ
+response đang phát khi phát hiện khách nói tiếp), ở cả hai loại VAD.
 
-### Ket luan chung cho Giai doan 6
+### Kết luận chung cho Giai đoạn 6
 
-Khong co to hop `turn_detection` nao (loai VAD, model, nguong) tu no giai
-quyet duoc bai toan thu so danh bo co ngung tu nhien. `create_response:false`
-la BAT BUOC (dung), nhung CHUA DU mot minh - can them logic gom nhieu
-manh transcript thanh 1 cau tra loi hoan chinh o tang ung dung
-(`call-flow/danh-bo-collect.js`), dua vao `previous_item_id` de xau chuoi
-va mot dieu kien ket thuc rieng (du so chu so hoac im lang dai). Day se
-la yeu cau thiet ke ro rang khi bat dau Giai doan 6, khong con la gia
-dinh nua.
+Không có tổ hợp `turn_detection` nào (loại VAD, model, ngưỡng) tự nó giải
+quyết được bài toán thu số danh bộ có ngừng tự nhiên. `create_response:false`
+là BẮT BUỘC (đúng), nhưng CHƯA ĐỦ một mình - cần thêm logic gom nhiều
+mảnh transcript thành 1 câu trả lời hoàn chỉnh ở tầng ứng dụng
+(`call-flow/danh-bo-collect.js`), dựa vào `previous_item_id` để xâu chuỗi
+và một điều kiện kết thúc riêng (đủ số chữ số hoặc im lặng dài). Đây sẽ
+là yêu cầu thiết kế rõ ràng khi bắt đầu Giai đoạn 6, không còn là giả
+định nữa.
 
-## Thi nghiem C: tat han VAD server (turn_detection:null), tu commit buffer 1 lan (20/08/2026, 2 model)
+## Thí nghiệm C: tắt hẳn VAD server (turn_detection:null), tự commit buffer 1 lần (20/08/2026, 2 model)
 
-Y tuong: neu VAD (ca semantic_vad lan server_vad) la nguyen nhan tach luot
-noi thanh nhieu manh (xem thi nghiem A/B o tren), thu tat han no di - app
-tu quyet dinh khi nao "chot" (commit) buffer, khong de server tu doan.
-Sua `scripts/probe-realtime.mjs` them `PROBE_TURN_TYPE=none`
-(`turn_detection: null`): script phat het audio (ca doan co ngung) roi tu
-gui `input_audio_buffer.commit` DUNG MOT LAN, sau do tuy chon co goi
-`response.create` thu cong hay khong.
+> **⚠️ CẬP NHẬT 21/08/2026: kết luận của thí nghiệm này KHÔNG áp dụng được cho bản sản xuất.** Dự án chỉ dùng SIP (OpenAI Realtime Calls API), Node không tự append/commit audio thô - xem mục "Bổ sung 21/08/2026: ràng buộc SIP-only..." bên dưới và "Ràng buộc kiến trúc" ở đầu `docs/roadmap.md`. Phần dưới đây vẫn đúng về mặt kỹ thuật (giải thích VÌ SAO ý tưởng này hoạt động), nhưng đừng dừng lại ở dòng "Kết luận cuối cùng" cuối mục này - nó đã bị sửa lại, xem ghi chú ở cuối mục.
 
-Chay tren ca 2 model, 2 file co khoang ngung that, ca 2 truong hop
+Ý tưởng: nếu VAD (cả semantic_vad lẫn server_vad) là nguyên nhân tách lượt
+nói thành nhiều mảnh (xem thí nghiệm A/B ở trên), thử tắt hẳn nó đi - app
+tự quyết định khi nào "chốt" (commit) buffer, không để server tự đoán.
+Sửa `scripts/probe-realtime.mjs` thêm `PROBE_TURN_TYPE=none`
+(`turn_detection: null`): script phát hết audio (cả đoạn có ngừng) rồi tự
+gửi `input_audio_buffer.commit` ĐÚNG MỘT LẦN, sau đó tuỳ chọn có gọi
+`response.create` thủ công hay không.
+
+Chạy trên cả 2 model, 2 file có khoảng ngừng thật, cả 2 trường hợp
 create_response false/true:
 
-| Model | File | create_response | So lan `committed` | Transcript (MOT manh duy nhat) |
+| Model | File | create_response | Số lần `committed` | Transcript (MỘT mảnh duy nhất) |
 | --- | --- | --- | --- | --- |
 | gpt-realtime-2.1-mini | `2_22082351775.wav` | false | 1 | "2208 23 51 77 5" |
 | gpt-realtime-2.1-mini | `2_22082351775.wav` | true | 1 | "220823515775" |
@@ -311,50 +357,54 @@ create_response false/true:
 | gpt-realtime-2.1 | `2_22082351775.wav` | true | 1 | "2208 23 51 77 5" |
 | gpt-realtime-2.1 | `6_ngap_ngung.wav` | false | 1 | "220203251775" |
 
-KET QUA: CA 6/6 LAN CHAY chi co DUNG MOT `input_audio_buffer.committed`
-va DUNG MOT `conversation.item.input_audio_transcription.completed` -
-KHONG con bi tach thanh nhieu manh nua, du audio co khoang ngung tu nhien
-giua cac cum so dai bao nhieu. Day la khac biet ro rang so voi thi
-nghiem A (cung 2 file nay, cung 2 model, nhung dung VAD thi bi tach 3-4
-manh).
+KẾT QUẢ: CẢ 6/6 LẦN CHẠY chỉ có ĐÚNG MỘT `input_audio_buffer.committed`
+và ĐÚNG MỘT `conversation.item.input_audio_transcription.completed` -
+KHÔNG còn bị tách thành nhiều mảnh nữa, dù audio có khoảng ngừng tự nhiên
+giữa các cụm số dài bao nhiêu. Đây là khác biệt rõ ràng so với thí
+nghiệm A (cùng 2 file này, cùng 2 model, nhưng dùng VAD thì bị tách 3-4
+mảnh).
 
-=> XAC NHAN: nguyen nhan goc re cua viec tach luot noi la co che VAD
-(server tu quyet dinh diem cat), KHONG PHAI ban than Realtime API hay
-model. Khi app tu kiem soat hoan toan thoi diem commit (`turn_detection:
-null`), server chi transcribe NGUYEN VAN nhung gi co trong buffer tai
-thoi diem commit - kể ca khoang ngung ben trong.
+=> XÁC NHẬN: nguyên nhân gốc rễ của việc tách lượt nói là cơ chế VAD
+(server tự quyết định điểm cắt), KHÔNG PHẢI bản thân Realtime API hay
+model. Khi app tự kiểm soát hoàn toàn thời điểm commit (`turn_detection:
+null`), server chỉ transcribe NGUYÊN VĂN những gì có trong buffer tại
+thời điểm commit - kể cả khoảng ngừng bên trong.
 
-RUI RO CON LAI (khong lien quan toi tach luot noi, la chat luong nhan
-dang giong noi thuan tuy): transcript doi khi lech 1 chu so so voi thuc
-te du la 1 manh duy nhat - vd cung 1 nguoi doc, ban `create_response:true`
-cua mini tra ve "220823515775" (12 chu so, du 22082351775 chi co 11), ban
-full/`6_ngap_ngung` tra ve "220203251775" (cung du 1 so). Day la loi cua
-model transcribe (`gpt-4o-transcribe`), khong phai loi tach luot - can co
-co che xac nhan lai voi khach (doc lai so vua nhan de khach xac nhan
-dung/sai) o Giai doan 6, khong the tin 100% transcript dau vao.
+RỦI RO CÒN LẠI (không liên quan tới tách lượt nói, là chất lượng nhận
+dạng giọng nói thuần tuý): transcript đôi khi lệch 1 chữ số so với thực
+tế dù là 1 mảnh duy nhất - vd cùng 1 người đọc, bản `create_response:true`
+của mini trả về "220823515775" (12 chữ số, dù 22082351775 chỉ có 11), bản
+full/`6_ngap_ngung` trả về "220203251775" (cũng dư 1 số). Đây là lỗi của
+model transcribe (`gpt-4o-transcribe`), không phải lỗi tách lượt - cần có
+cơ chế xác nhận lại với khách (đọc lại số vừa nhận để khách xác nhận
+đúng/sai) ở Giai đoạn 6, không thể tin 100% transcript đầu vào.
 
-DANH DOI can luu y: khi tat VAD hoan toan, KHONG con `interrupt_response`
-tu dong nao ca (khong co VAD nao de phat hien khach noi tiep giua chung
-ma huy response) - ca 2 lan create_response:true deu ket thuc binh thuong
-`response.done status=completed`, khong co lan nao bi `cancelled`. Voi
-"locked mode" (dang doc so, muon khach doc het khong bi ngat) day la
-DIEU MONG MUON, khong phai nhuoc diem.
+ĐÁNH ĐỔI cần lưu ý: khi tắt VAD hoàn toàn, KHÔNG còn `interrupt_response`
+tự động nào cả (không có VAD nào để phát hiện khách nói tiếp giữa chừng
+mà huỷ response) - cả 2 lần create_response:true đều kết thúc bình thường
+`response.done status=completed`, không có lần nào bị `cancelled`. Với
+"locked mode" (đang đọc số, muốn khách đọc hết không bị ngắt) đây là
+ĐIỀU MONG MUỐN, không phải nhược điểm.
 
-### Ket luan cuoi cung cho kien truc Giai doan 6
+### Kết luận cuối cùng cho kiến trúc Giai đoạn 6
 
-Doi lai de xuat truoc (gom nhieu manh transcript qua `previous_item_id`):
-CACH DON GIAN VA CHAC CHAN HON la dung `turn_detection: null` cho ca giai
-doan thu thap ma danh bo, roi TU APP (khong phai VAD cua OpenAI) quyet
-dinh khi nao commit - vi du dua vao: da nhan du so khung PCM tuong ung
-voi ~X giay (uoc luong thoi gian doc 11 so), hoac tu theo doi nang luong
-am thanh tho (buffer da yen lang lien tuc Y giay) o tang audiosocket
-truoc khi goi `input_audio_buffer.commit`. Nho do:
-- Luon nhan duoc DUNG MOT transcript cho ca cau tra loi, khong can logic
-  gom/xau chuoi nhieu item.
-- Khong co nguy co bi `interrupt_response` huy response giua chung.
-- Nhuoc diem duy nhat: mat luon co che "server tu phat hien nguoi noi
-  xong" - app phai tu lam viec nay (co the don gian: cho toi khi audio
-  buffer tho lien tuc yen lang qua 1 nguong, hoac cho het thoi luong toi
-  da hop ly).
-- Van can co buoc "xac nhan lai danh bo voi khach" o Giai doan 6 vi
-  transcript co the lech 1 chu so ngay ca khi khong bi tach luot noi.
+Đổi lại đề xuất trước (gom nhiều mảnh transcript qua `previous_item_id`):
+CÁCH ĐƠN GIẢN VÀ CHẮC CHẮN HƠN là dùng `turn_detection: null` cho cả giai
+đoạn thu thập mã danh bộ, rồi TỰ APP (không phải VAD của OpenAI) quyết
+định khi nào commit - ví dụ dựa vào: đã nhận đủ số khung PCM tương ứng
+với ~X giây (ước lượng thời gian đọc 11 số), hoặc tự theo dõi năng lượng
+âm thanh thô (buffer đã yên lặng liên tục Y giây) ở tầng audiosocket
+trước khi gọi `input_audio_buffer.commit`. Nhờ đó:
+- Luôn nhận được ĐÚNG MỘT transcript cho cả câu trả lời, không cần logic
+  gom/xâu chuỗi nhiều item.
+- Không có nguy cơ bị `interrupt_response` huỷ response giữa chừng.
+- Nhược điểm duy nhất: mất luôn cơ chế "server tự phát hiện người nói
+  xong" - app phải tự làm việc này (có thể đơn giản: chờ tới khi audio
+  buffer thô liên tục yên lặng qua 1 ngưỡng, hoặc chờ hết thời lượng tối
+  đa hợp lý).
+- Vẫn cần có bước "xác nhận lại danh bộ với khách" ở Giai đoạn 6 vì
+  transcript có thể lệch 1 chữ số ngay cả khi không bị tách lượt nói.
+
+(**LƯU Ý (21/08/2026): kết luận trên đã được sửa lại ở mục "Bổ sung
+21/08/2026" phía trên - `turn_detection: null` không áp dụng được cho bản
+sản xuất vì kiến trúc chỉ SIP-only, không có audio thô cục bộ.**)

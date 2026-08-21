@@ -1,79 +1,169 @@
-# Lo trinh viet lai (voice-bot-trungan v2)
+# Lộ trình viết lại (voice-bot-trungan v2)
 
-Nguyen tac chung: moi giai doan viet it nhat co the, tu kiem chung duoc
-(test/log ro rang) truoc khi qua giai doan ke tiep. Moi giai doan la MOT
-commit git rieng de de rollback.
+Nguyên tắc chung: mỗi giai đoạn viết ít nhất có thể, tự kiểm chứng được
+(test/log rõ ràng) trước khi qua giai đoạn kế tiếp. Mỗi giai đoạn là MỘT
+commit git riêng để dễ rollback.
 
-- [x] **Giai doan 0 - Khung xuong.** `package.json` (chua co dependency),
-  cay thu muc rong theo lop (`src/session`, `src/call-flow`, `src/domain`,
-  `src/integrations`, `src/logging`, `docs/fix`, `test`). Muc tieu: `npm
-  start` chay, log ra "OK", chua ket noi gi ca.
+## Ràng buộc kiến trúc (bổ sung 21/08/2026, đã xác nhận với chủ dự án)
 
-- [x] **Giai doan 1 - Nhin tan mat luong event that.** Da chay
-  `scripts/probe-realtime.mjs` voi 5 file audio test (cau hoi thuong, doc
-  so danh bo, doc so co ngap ngung, tap am, smoke test text). Phat hien
-  quan trong: doc so co khoang ngung giua cac cum -> `semantic_vad
-  (eagerness:low)` co the cat luot noi giua chung (tai hien dung loi ban cu
-  tung vo); transcript luon den SAU khi response da bat dau, khong dung de
-  quyet dinh duoc. Chi tiet + du lieu doi chieu: xem
+Bản SẢN XUẤT (`voice_bot`) chỉ dùng SIP (OpenAI Realtime Calls API -
+accept/reject/refer/hangup qua `call-manager.js`) + MỘT WebSocket
+control-plane để nghe/gửi session event. KHÔNG dùng AudioSocket - Node
+KHÔNG BAO GIỜ nhận hay tự append audio thô (xác nhận lại với chủ dự án
+21/08/2026; đối chiếu code cũ cũng không có lần gọi
+`input_audio_buffer.append`/`.commit` nào trong `session-ws.js`). Hệ quả
+cho cả lộ trình này:
+
+- Bất kỳ thiết kế nào giả định "app tự đọc được audio thô để tự làm
+  VAD/silence-detection" (vd `turn_detection: null` + app tự gọi
+  `input_audio_buffer.commit` - xem "Thí nghiệm C" trong
+  `docs/fix/giai_doan_1_quan_sat_event_that_20260820.md`) đều KHÔNG dùng
+  được cho bản sản xuất, trừ khi có quyết định riêng (rủi ro cao, cần hỏi
+  lại chủ dự án) bật AudioSocket song song SIP - hiện KHÔNG nằm trong
+  phạm vi dự án.
+- Giai đoạn 8 vì vậy chỉ nối lại SIP thật qua `call-manager.js`, KHÔNG
+  "nối AudioSocket" (xem chi tiết ở Giai đoạn 8 bên dưới).
+- Giai đoạn 6 (thu thập danh bộ) phải chọn hướng tương thích SIP+WS
+  thuần - xem 2 phương án bên dưới.
+
+- [x] **Giai đoạn 0 - Khung xương.** `package.json` (chưa có dependency),
+  cây thư mục rỗng theo lớp (`src/session`, `src/call-flow`, `src/domain`,
+  `src/integrations`, `src/logging`, `docs/fix`, `test`). Mục tiêu: `npm
+  start` chạy, log ra "OK", chưa kết nối gì cả.
+
+- [x] **Giai đoạn 1 - Nhìn tận mắt luồng event thật.** Đã chạy
+  `scripts/probe-realtime.mjs` với 5 file audio test (câu hỏi thường, đọc
+  số danh bộ, đọc số có ngập ngừng, tạp âm, smoke test text). Phát hiện
+  quan trọng: đọc số có khoảng ngừng giữa các cụm -> `semantic_vad
+  (eagerness:low)` có thể cắt lượt nói giữa chừng (tái hiện đúng lỗi bản cũ
+  từng vấp); transcript luôn đến SAU khi response đã bắt đầu, không dùng để
+  quyết định được. Chi tiết + dữ liệu đối chiếu: xem
   `docs/fix/giai_doan_1_quan_sat_event_that_20260820.md`.
 
-- [x] **Giai doan 2 - `src/session/turn-signal.js`.** Ham thuan
-  `normalizeTurnEvent(rawEvent)`: nhan 1 event tho, tra ve object
-  `{kind, ...}` da chuan hoa (speech-started/stopped, buffer-committed
-  co previousItemId, transcript-ready, response-started/ended, error,
-  ignored). Test o `test/turn-signal.test.mjs`, replay fixture
-  `test/fixtures/turn-signal-events.jsonl` (dang giong log that cua
-  Giai doan 1) bang `node --test` (npm run test) - khong goi OpenAI
-  that. 5/5 test pass.
+- [x] **Giai đoạn 2 - `src/session/turn-signal.js`.** Hàm thuần
+  `normalizeTurnEvent(rawEvent)`: nhận 1 event thô, trả về object
+  `{kind, ...}` đã chuẩn hoá (speech-started/stopped, buffer-committed
+  có previousItemId, transcript-ready, response-started/ended, error,
+  ignored). Test ở `test/turn-signal.test.mjs`, replay fixture
+  `test/fixtures/turn-signal-events.jsonl` (dạng giống log thật của
+  Giai đoạn 1) bằng `node --test` (npm run test) - không gọi OpenAI
+  thật. 5/5 test pass.
 
-- [ ] **Giai doan 3 - `src/session/turn-controller.js`.** Cua duy nhat gui
-  `response.create`/`cancel`, API toi gian `say({mode, text|instructions|
-  toolChoice})`, tu quan race (`_responseActive`, `gen` token). Test bang
-  WS gia (mock `ws.send`) cho tung race da biet o ban cu (hai response
-  cung gui, retry mo coi, cancel nham response) truoc khi tich hop.
+- [ ] **Giai đoạn 3 - `src/session/turn-controller.js`.** Cửa duy nhất gửi
+  `response.create`/`cancel`, API tối giản `say({mode, text|instructions|
+  toolChoice})`, tự quản race (`_responseActive`, `gen` token). Test bằng
+  WS giả (mock `ws.send`) cho từng race đã biết ở bản cũ (hai response
+  cùng gửi, retry mở khoá, cancel nhầm response) trước khi tích hợp.
 
-- [ ] **Giai doan 4 - Checkpoint goi thu dau-cuoi dau tien.** Chi
-  implement phase "hoi dap tu do" (`create_response:true`, model tu tra
-  loi). `src/session/session-ws.js` la orchestrator mong noi cac lop lai.
+- [ ] **Giai đoạn 4 - Checkpoint gọi thử đầu-cuối đầu tiên.** Chỉ
+  implement phase "hỏi đáp tự do" (`create_response:true`, model tự trả
+  lời). `src/session/session-ws.js` là orchestrator mỏng nối các lớp lại.
 
-- [ ] **Giai doan 5 - Chuyen logic nghiep vu co chon loc.** Dua
+- [ ] **Giai đoạn 5 - Chuyển logic nghiệp vụ có chọn lọc.** Đưa
   `tools.js`, `system-prompt.js`, `db.js`, `api.js`,
-  `danh-bo-arbiter.js` tu project cu sang `src/domain/` / `src/
-  integrations/` - ra soat: giu phan nghiep vu that, bo phan chi ton tai
-  de va race cua kien truc cu (turn-controller da lo viec do). Doi chieu
-  voi cac quyet dinh da ghi trong project memory (transcript chi de
-  debug, gate xac nhan loi noi cho danh bo trong tai, SDT test hardcode)
-  de khong danh mat bai hoc.
+  `danh-bo-arbiter.js` từ project cũ sang `src/domain/` / `src/
+  integrations/` - rà soát: giữ phần nghiệp vụ thật, bỏ phần chỉ tồn tại
+  để vá race của kiến trúc cũ (turn-controller đã lo việc đó). Đối chiếu
+  với các quyết định đã ghi trong project memory (transcript chỉ để
+  debug, gate xác nhận lời nói cho danh bộ trọng tài, SĐT test hardcode)
+  để không đánh mất bài học.
 
-- [ ] **Giai doan 6 - Phase phuc tap nhat: danh bo.**
-  `src/call-flow/danh-bo-collect.js` va `danh-bo-confirm.js` duoi dang
-  bang matcher (khong phai if/else long nhau). Test tung matcher bang
-  fixture transcript rieng le, roi moi test tich hop qua harness cua
-  Giai doan 1.
+- [ ] **Giai đoạn 6 - Phase phức tạp nhất: danh bộ.** Hai phương án SONG
+  SONG, CẢ HAI đều cần code thật trong `src/call-flow/` để team tự gọi
+  thử/so sánh - KHÔNG chọn trước một phương án "đúng" trên giấy.
 
-- [ ] **Giai doan 7 - `src/session/watchdogs.js`.** Luoi an toan dung
-  chung (mute watchdog, vad-restore watchdog). Test gia lap tinh huong
-  "quen trigger response" de xac nhan watchdog cuu duoc.
+  **Phương án A - Code/VAD xác định số (kế thừa tinh thần bản cũ, model
+  KHÔNG được tự đưa số vào tool).** `danh-bo-collect.js`: giữ VAD như
+  hiện tại (chấp nhận VAD tách thành nhiều mảnh `input_audio_buffer.
+  committed`), CODE tự gom các mảnh transcript liên tiếp bằng
+  `previous_item_id` (đã có sẵn trong `turn-signal.js` - trường
+  `buffer-committed.previousItemId`), tự quyết định điểm KẾT THÚC một
+  lượt đọc (đủ 11 chữ số, hoặc khoảng lặng dài hơn ngưỡng giữa các cụm),
+  rồi CODE gọi `_speakVerbatim` đọc lại xin xác nhận - đúng tinh thần Thí
+  nghiệm A của Giai đoạn 1. TƯƠNG THÍCH SIP+WS thuần, không cần audio
+  thô. `danh-bo-confirm.js`: xử lý câu trả lời của khách (đúng/sai/sửa)
+  bằng bảng matcher.
 
-- [ ] **Giai doan 8 - Noi Asterisk/AudioSocket that.** Chuyen
-  `audiosocket.js`, `call-manager.js` sang cuoi cung - sau khi toan bo
-  logic phia tren da test duoc ma khong can dien thoai that.
+  **Phương án B - Model tự thu thập + code đối chiếu transcript (mới, đề
+  xuất 21/08/2026, thực hiện theo đúng "Entity Collection Workflow" của
+  OpenAI - skill `realtime-voice-prompting`,
+  `references/prompting-guide.md` mục 11).** Model được phép tự nghe,
+  chuẩn hoá, VÀ đọc lại TỪNG CHỮ SỐ xin khách xác nhận (không đọc nguyên
+  cả số - dễ lộ sai). Chỉ sau khi khách xác nhận, model gọi 1 tool RIÊNG
+  `confirm_danh_bo(value)` (KHÔNG gộp chung với tool tra cứu - để code có
+  1 điểm neo rõ ràng để đối chiếu, thay vì phải đoán trong cả dòng hội
+  thoại). Code ở tool-handler:
+  1. Khớp cặp "câu model vừa đọc lại xin xác nhận" (event
+     `response.output_audio_transcript...` - tin cậy cao vì là text gốc
+     điều khiển TTS, KHÔNG phải kết quả ASR) với "câu khách trả lời ngay
+     sau đó" (`conversation.item.input_audio_transcription.completed`),
+     dùng `previous_item_id`/thứ tự item để khớp ĐÚNG CẶP, không chỉ lấy
+     "N event gần nhất" (tránh khớp nhầm do độ trễ bất đồng bộ đã ghi
+     nhận ở Giai đoạn 1 - transcript có thể đến sau `response.created`).
+  2. Trích số từ chính câu model đọc lại (parse text model tự sinh ra -
+     dễ hơn nhiều so với parse ASR, vì là chuỗi xác định chứ không phải
+     audio) và xác định khách có xác nhận "đúng" hay không (dùng lại bộ
+     phát hiện đã có sẵn cho nhánh trọng tài hiện tại).
+  3. Nếu giá trị tool nhận được KHỚP với số đã trích từ bước 1-2 (và
+     khách đã xác nhận đúng) -> dùng giá trị đó gọi API thật.
+  4. Nếu LỆCH -> dùng số ĐÃ ĐƯỢC XÁC NHẬN qua transcript (không phải số
+     model vừa gửi vào tool) để gọi API, ĐỒNG THỜI báo lại cho model qua
+     tool result giá trị đúng đã dùng, để model nói nhất quán về sau.
+  5. Cache số đã xác nhận vào `callState` cho cả cuộc gọi; mỗi lần gọi
+     tool tra cứu kế tiếp đều đối chiếu với cache - nếu khác, áp lại
+     đúng bước 3-4 (không tự động tin số mới, cũng không tự động chặn -
+     khách có thể hỏi về một mã khác thật trong cùng cuộc gọi).
+  6. Nếu bước 1 KHÔNG khớp được cặp transcript nào rõ ràng (vd ASR hỏng
+     cả câu đọc lại lẫn câu xác nhận) -> KHÔNG mặc định tin số của model
+     - rơi vào nhánh "không kết luận được", quay lại xin đọc lại hoặc
+     leo thang DTMF (dùng watchdog của Giai đoạn 7).
 
-- [ ] **Giai doan 9 - Doi chieu voi bo test cu.** Chuyen/thich nghi 4 file
-  trong `test_case/*.test.mjs` cua ban cu (`danh_bo_20260726`,
-  `danh_bo_verify_flow`, `speak_verbatim`, `muc_c_khong_cam`) sang chay
-  tren ban moi - dieu kien "duoc phep thay the ban cu" chi khi pass het.
+  RỦI RO CẦN LƯU Ý ở Phương án B, CHƯA được giải quyết chỉ bằng đối
+  chiếu transcript: cơ chế này chỉ bắt được lỗi "model NÓI một đằng, GỌI
+  TOOL một nẻo" (đúng bug THẬT đã gặp 30/07/2026 - xem memory
+  `voicebot-realtime-21-migration`: model tự gọi tool với số bịa khi mới
+  nghe 4/11 số). Nó KHÔNG bắt được trường hợp model NGHE SAI từ đầu, đọc
+  lại đúng cái SAI đó, khách (lơ đãng/tin tưởng bot) lỡ xác nhận "đúng"
+  cho một số sai từ đầu - lúc đó cả 3 lớp (model nói, khách xác nhận,
+  model gọi tool) "khớp nhau" nhưng vẫn SAI. Đây chính là lý do bản cũ
+  dùng trọng tài gpt-5.1 độc lập ở nhánh "trọng tài" (xem memory
+  `voicebot-danhbo-verbal-confirm-gate`) - trước khi coi Phương án B là
+  thay thế hoàn toàn cho Phương án A, cần quyết định rõ: có đủ tin chỉ
+  đọc-từng-chữ-số + xác nhận của khách là đủ, hay vẫn cần giữ thêm 1 lớp
+  đối lập độc lập (trọng tài / bắt buộc DTMF cho lần đầu) cho trường hợp
+  này.
 
-## Quy uoc
+  Test từng matcher/cơ chế đối chiếu bằng fixture transcript riêng lẻ
+  (CẢ 2 phương án), rồi mới test tích hợp qua harness của Giai đoạn 1.
 
-- File/thu muc: kebab-case, khong dau cach, khong hau to "copy"/"v2"/
-  "backup" (git da giu lich su).
-- Thuat ngu nghiep vu tieng Viet (danh bo, xac nhan...) giu nguyen trong
-  ten - la ngon ngu nghiep vu ca team dang dung.
-- `src/session/` duoc phep biet ve WebSocket/Realtime event.
-  `src/domain/` KHONG duoc import gi tu `ws` - logic nghiep vu thuan,
-  test duoc khong can mo ket noi that.
-- Moi thay doi kien truc lon o `src/session/` nen co 1 file ghi lai trong
-  `docs/fix/` (giong thoi quen `docs/fix/` cua ban cu), giai thich VI SAO
-  chu khong chi DA DOI GI.
+- [ ] **Giai đoạn 7 - `src/session/watchdogs.js`.** Lưới an toàn dùng
+  chung (mute watchdog, vad-restore watchdog). Test giả lập tình huống
+  "quên trigger response" để xác nhận watchdog cứu được.
+
+- [ ] **Giai đoạn 8 - Nối SIP thật qua OpenAI Realtime Calls API.**
+  Chuyển `call-manager.js` (accept/reject/refer/hangup) sang cuối cùng -
+  sau khi toàn bộ logic phía trên đã test được mà không cần điện thoại
+  thật. KHÔNG dùng AudioSocket - `audiosocket.js` của bản cũ KHÔNG được
+  mang sang (dự án sản xuất không dùng nó, xem "Ràng buộc kiến trúc" đầu
+  file). Nếu về sau muốn thử hướng `turn_detection: null` + app tự VAD
+  (Thí nghiệm C, Giai đoạn 1 - hiện KHÔNG khả thi, xem "Ràng buộc kiến
+  trúc"), đây là quyết định kiến trúc riêng cần bật lại audio thô, ngoài
+  phạm vi lộ trình này - phải hỏi lại chủ dự án trước.
+
+- [ ] **Giai đoạn 9 - Đối chiếu với bộ test cũ.** Chuyển/thích nghi 4 file
+  trong `test_case/*.test.mjs` của bản cũ (`danh_bo_20260726`,
+  `danh_bo_verify_flow`, `speak_verbatim`, `muc_c_khong_cam`) sang chạy
+  trên bản mới - điều kiện "được phép thay thế bản cũ" chỉ khi pass hết.
+
+## Quy ước
+
+- File/thư mục: kebab-case, không dấu cách, không hậu tố "copy"/"v2"/
+  "backup" (git đã giữ lịch sử).
+- Thuật ngữ nghiệp vụ tiếng Việt (danh bộ, xác nhận...) giữ nguyên trong
+  tên - là ngôn ngữ nghiệp vụ cả team đang dùng.
+- `src/session/` được phép biết về WebSocket/Realtime event.
+  `src/domain/` KHÔNG được import gì từ `ws` - logic nghiệp vụ thuần,
+  test được không cần mở kết nối thật.
+- Mỗi thay đổi kiến trúc lớn ở `src/session/` nên có 1 file ghi lại trong
+  `docs/fix/` (giống thói quen `docs/fix/` của bản cũ), giải thích VÌ SAO
+  chứ không chỉ ĐÃ ĐỔI GÌ.
