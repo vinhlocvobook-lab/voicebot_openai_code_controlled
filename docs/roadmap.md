@@ -68,31 +68,37 @@ cho cả lộ trình này:
   debug, gate xác nhận lời nói cho danh bộ trọng tài, SĐT test hardcode)
   để không đánh mất bài học.
 
-- [ ] **Giai đoạn 6 - Phase phức tạp nhất: danh bộ.** Hai phương án SONG
-  SONG, CẢ HAI đều cần code thật trong `src/call-flow/` để team tự gọi
-  thử/so sánh - KHÔNG chọn trước một phương án "đúng" trên giấy.
+- [ ] **Giai đoạn 6a - Phương án A: code/VAD gom transcript (danh bộ).**
+  (Quyết định 21/08/2026: tách Giai đoạn 6 cũ thành 6a/6b làm TUẦN TỰ,
+  đúng nguyên tắc "viết ít nhất có thể, tự kiểm chứng trước khi qua giai
+  đoạn kế" - xem `docs/fix/giai_doan_1_quan_sat_event_that_20260820.md`.
+  6a xong, test/commit ổn mới sang 6b, không làm song song.)
 
-  **Phương án A - Code/VAD xác định số (kế thừa tinh thần bản cũ, model
-  KHÔNG được tự đưa số vào tool).** `danh-bo-collect.js`: giữ VAD như
-  hiện tại (chấp nhận VAD tách thành nhiều mảnh `input_audio_buffer.
-  committed`), CODE tự gom các mảnh transcript liên tiếp bằng
-  `previous_item_id` (đã có sẵn trong `turn-signal.js` - trường
-  `buffer-committed.previousItemId`), tự quyết định điểm KẾT THÚC một
-  lượt đọc (đủ 11 chữ số, hoặc khoảng lặng dài hơn ngưỡng giữa các cụm),
-  rồi CODE gọi `_speakVerbatim` đọc lại xin xác nhận - đúng tinh thần Thí
-  nghiệm A của Giai đoạn 1. TƯƠNG THÍCH SIP+WS thuần, không cần audio
-  thô. `danh-bo-confirm.js`: xử lý câu trả lời của khách (đúng/sai/sửa)
-  bằng bảng matcher.
+  Code/VAD xác định số (kế thừa tinh thần bản cũ, model KHÔNG được tự đưa
+  số vào tool). `danh-bo-collect.js`: giữ VAD như hiện tại (chấp nhận VAD
+  tách thành nhiều mảnh `input_audio_buffer.committed`), CODE tự gom các
+  mảnh transcript liên tiếp bằng `previous_item_id` (đã có sẵn trong
+  `turn-signal.js` - trường `buffer-committed.previousItemId`), tự
+  quyết định điểm KẾT THÚC một lượt đọc (đủ 11 chữ số, hoặc khoảng lặng
+  dài hơn ngưỡng giữa các cụm - tham khảo số liệu 416ms-1348ms đã đo ở
+  Giai đoạn 1, nhưng ưu tiên "đủ 11 chữ số" làm điều kiện chính), rồi CODE
+  gọi `_speakVerbatim` đọc lại xin xác nhận - đúng tinh thần Thí nghiệm A
+  của Giai đoạn 1. TƯƠNG THÍCH SIP+WS thuần, không cần audio thô.
+  `danh-bo-confirm.js`: xử lý câu trả lời của khách (đúng/sai/sửa) bằng
+  bảng matcher.
 
-  **Phương án B - Model tự thu thập + code đối chiếu transcript (mới, đề
-  xuất 21/08/2026, thực hiện theo đúng "Entity Collection Workflow" của
-  OpenAI - skill `realtime-voice-prompting`,
-  `references/prompting-guide.md` mục 11).** Model được phép tự nghe,
-  chuẩn hoá, VÀ đọc lại TỪNG CHỮ SỐ xin khách xác nhận (không đọc nguyên
-  cả số - dễ lộ sai). Chỉ sau khi khách xác nhận, model gọi 1 tool RIÊNG
-  `confirm_danh_bo(value)` (KHÔNG gộp chung với tool tra cứu - để code có
-  1 điểm neo rõ ràng để đối chiếu, thay vì phải đoán trong cả dòng hội
-  thoại). Code ở tool-handler:
+  Test từng matcher bằng fixture transcript riêng lẻ, rồi mới test tích
+  hợp qua harness của Giai đoạn 1.
+
+- [ ] **Giai đoạn 6b - Phương án B: model tự thu thập + code đối chiếu
+  (danh bộ).** Chỉ bắt đầu sau khi 6a đã xong và có kết quả để so sánh.
+  Đề xuất 21/08/2026, thực hiện theo đúng "Entity Collection Workflow" của
+  OpenAI - skill `realtime-voice-prompting`, `references/prompting-guide.md`
+  mục 11. Model được phép tự nghe, chuẩn hoá, VÀ đọc lại TỪNG CHỮ SỐ xin
+  khách xác nhận (không đọc nguyên cả số - dễ lộ sai). Chỉ sau khi khách
+  xác nhận, model gọi 1 tool RIÊNG `confirm_danh_bo(value)` (KHÔNG gộp
+  chung với tool tra cứu - để code có 1 điểm neo rõ ràng để đối chiếu,
+  thay vì phải đoán trong cả dòng hội thoại). Code ở tool-handler:
   1. Khớp cặp "câu model vừa đọc lại xin xác nhận" (event
      `response.output_audio_transcript...` - tin cậy cao vì là text gốc
      điều khiển TTS, KHÔNG phải kết quả ASR) với "câu khách trả lời ngay
@@ -125,16 +131,36 @@ cho cả lộ trình này:
   nghe 4/11 số). Nó KHÔNG bắt được trường hợp model NGHE SAI từ đầu, đọc
   lại đúng cái SAI đó, khách (lơ đãng/tin tưởng bot) lỡ xác nhận "đúng"
   cho một số sai từ đầu - lúc đó cả 3 lớp (model nói, khách xác nhận,
-  model gọi tool) "khớp nhau" nhưng vẫn SAI. Đây chính là lý do bản cũ
-  dùng trọng tài gpt-5.1 độc lập ở nhánh "trọng tài" (xem memory
-  `voicebot-danhbo-verbal-confirm-gate`) - trước khi coi Phương án B là
-  thay thế hoàn toàn cho Phương án A, cần quyết định rõ: có đủ tin chỉ
-  đọc-từng-chữ-số + xác nhận của khách là đủ, hay vẫn cần giữ thêm 1 lớp
-  đối lập độc lập (trọng tài / bắt buộc DTMF cho lần đầu) cho trường hợp
-  này.
+  model gọi tool) "khớp nhau" nhưng vẫn SAI.
 
-  Test từng matcher/cơ chế đối chiếu bằng fixture transcript riêng lẻ
-  (CẢ 2 phương án), rồi mới test tích hợp qua harness của Giai đoạn 1.
+  QUYẾT ĐỊNH (21/08/2026): CÓ giữ lớp trọng tài gpt-5.1 độc lập (bản cũ
+  dùng ở nhánh "trọng tài" - xem memory
+  `voicebot-danhbo-verbal-confirm-gate`), nhưng CHỈ kích hoạt khi có đủ 2
+  nguồn dữ liệu độc lập - một lần đọc+xác nhận duy nhất thì trọng tài
+  không có thêm dữ liệu nào để phán xét (chỉ đang phúc tra lại đúng 1
+  nguồn). Cơ chế kích hoạt cụ thể - thêm bước 2.5 vào quy trình trên:
+
+  2.5. Sau bước 2 (trích số từ câu model đọc lại), SO SÁNH số đó với
+       transcript ASR (`conversation.item.input_audio_transcription.
+       completed`) của (các) lượt khách ĐỌC SỐ BAN ĐẦU (không phải câu
+       model đọc lại xin xác nhận) - đây là nguồn độc lập, khác kênh với
+       những gì model tự nghe. KHỚP -> đủ tin cậy, đi tiếp bước 3 bình
+       thường, KHÔNG cần gọi trọng tài (tiết kiệm chi phí/độ trễ cho đa số
+       trường hợp). KHÔNG KHỚP (hoặc ASR quá mơ hồ, không trích được số
+       rõ ràng) -> yêu cầu khách đọc lại VÀ xác nhận thêm MỘT LẦN NỮA toàn
+       bộ chu trình đọc-xác nhận; sau lần 2, gọi trọng tài gpt-5.1 SO SÁNH
+       CẢ 2 LẦN (model đọc lại lần 1 + ASR gốc lần 1; model đọc lại lần 2
+       + ASR gốc lần 2 + xác nhận lần 2) để đưa phán quyết cuối cùng - lúc
+       này trọng tài mới có đủ 2 nguồn độc lập để đối chiếu chéo.
+
+  ĐÁNH ĐỔI đã chấp nhận: ASR (`gpt-4o-transcribe`) tự nó không hoàn hảo
+  (Giai đoạn 1 đã ghi nhận có thể lệch 1 chữ số dù model nghe đúng), nên
+  bước 2.5 có thể gây một số lần "báo động giả" (bắt khách đọc lại dù
+  model đã nghe đúng, chỉ vì ASR lệch) - chấp nhận được vì cái giá nhỏ hơn
+  nhiều so với rủi ro đưa nhầm thông tin của khách khác.
+
+  Test từng matcher/cơ chế đối chiếu bằng fixture transcript riêng lẻ,
+  rồi mới test tích hợp qua harness của Giai đoạn 1.
 
 - [ ] **Giai đoạn 7 - `src/session/watchdogs.js`.** Lưới an toàn dùng
   chung (mute watchdog, vad-restore watchdog). Test giả lập tình huống
