@@ -4,6 +4,46 @@ Nguyên tắc chung: mỗi giai đoạn viết ít nhất có thể, tự kiểm
 (test/log rõ ràng) trước khi qua giai đoạn kế tiếp. Mỗi giai đoạn là MỘT
 commit git riêng để dễ rollback.
 
+## Vì sao chia giai đoạn như vậy (bổ sung 21/08/2026)
+
+Bản cũ (`session-ws.js`) là một file lớn, trộn lẫn nhiều mối lo trong
+cùng một chỗ: kết nối WebSocket, quyết định khi nào bot được nói, logic
+nghiệp vụ (tra cứu/xác nhận danh bộ), và các đoạn vá race condition -
+khi có bug, rất khó biết lỗi nằm ở lớp nào. Mục tiêu của bản viết lại là
+TÁCH RIÊNG từng mối lo thành từng lớp độc lập, để mỗi lớp hiểu/test được
+riêng biệt.
+
+Nguyên tắc xuyên suốt: xây từ DƯỚI LÊN, lớp sau chỉ được xây khi lớp
+trước đã CÓ TEST chứng minh là đúng (không phải "chắc là đúng"). Thứ tự
+10 giai đoạn phản ánh đúng thứ tự phụ thuộc đó:
+
+- **Giai đoạn 1** (biết sự thật): quan sát event thật từ OpenAI trước khi
+  thiết kế bất kỳ thứ gì lên trên - tránh thiết kế dựa trên đoán rồi phải
+  làm lại.
+- **Giai đoạn 2-3** (nền tảng kỹ thuật, tách khỏi nghiệp vụ):
+  `turn-signal.js` dịch event thô sang hình dạng dễ hiểu (không quyết
+  định gì); `turn-controller.js` là nơi DUY NHẤT được ra lệnh nói/dừng
+  nói, gom đúng lớp bug hay gặp nhất của bản cũ (race condition) vào MỘT
+  chỗ, test kỹ trước khi ai khác được phép gọi.
+- **Giai đoạn 4** (kiểm tra nền tảng hoạt động): chỉ làm kịch bản đơn
+  giản nhất (hỏi đáp tự do) để xác nhận 2 lớp nền tảng thực sự phối hợp
+  được với nhau, trước khi thêm nghiệp vụ phức tạp lên trên - nếu nền có
+  vấn đề, phát hiện ở đây, không lẫn với bug nghiệp vụ sau này.
+- **Giai đoạn 5-7** (nghiệp vụ, từ dễ đến khó nhất, cộng lưới an toàn):
+  chuyển logic nghiệp vụ thật (lọc bỏ phần chỉ tồn tại để vá race của
+  kiến trúc cũ); Giai đoạn 6 (danh bộ) là phase rủi ro cao nhất nên để
+  sau cùng trong nhóm này, khi nền tảng đã vững; Giai đoạn 7 (watchdogs)
+  là lưới an toàn cho các tình huống không lường trước được.
+- **Giai đoạn 8** (nối thật): cố tình để CUỐI CÙNG vì một khi có điện
+  thoại thật, mỗi lần test là một cuộc gọi thật, không tự động hoá được -
+  để dành phần này sau cùng nghĩa là lúc nối dây thật, logic bên trong đã
+  được test kỹ bằng script giả lập rồi.
+- **Giai đoạn 9** (chốt thay thế): bản mới chỉ được phép thay bản cũ khi
+  pass đúng bộ test bản cũ từng dùng để tự tin là đúng.
+
+Mỗi giai đoạn là câu trả lời cho câu hỏi: "làm sao biết bước trước ĐÃ
+ĐÚNG trước khi tin tưởng xây tiếp lên trên nó".
+
 ## Ràng buộc kiến trúc (bổ sung 21/08/2026, đã xác nhận với chủ dự án)
 
 Bản SẢN XUẤT (`voice_bot`) chỉ dùng SIP (OpenAI Realtime Calls API -
@@ -49,11 +89,22 @@ cho cả lộ trình này:
   Giai đoạn 1) bằng `node --test` (npm run test) - không gọi OpenAI
   thật. 5/5 test pass.
 
-- [ ] **Giai đoạn 3 - `src/session/turn-controller.js`.** Cửa duy nhất gửi
-  `response.create`/`cancel`, API tối giản `say({mode, text|instructions|
-  toolChoice})`, tự quản race (`_responseActive`, `gen` token). Test bằng
-  WS giả (mock `ws.send`) cho từng race đã biết ở bản cũ (hai response
-  cùng gửi, retry mở khoá, cancel nhầm response) trước khi tích hợp.
+- [x] **Giai đoạn 3 - `src/session/turn-controller.js`.** Cửa duy nhất
+  gửi `response.create`/`cancel`, API tối giản `say({mode: "auto"|
+  "guided"|"verbatim"|"tool", ...})`. Chống 3 race đã biết ở bản cũ bằng
+  "generation token" + hàng đợi FIFO các response.create đã gửi nhưng
+  chưa có response-started: mỗi say() tăng `generation`, huỷ (đúng
+  response_id thật nếu đã biết, không đoán mò) mọi thứ đang chờ/đang
+  chạy, đánh dấu chúng "đã huỷ"; tín hiệu response-started tiếp theo
+  luôn ghép với phần tử ở ĐẦU hàng đợi (đúng thứ tự server xử lý) - nếu
+  phần tử đó đã bị đánh dấu huỷ thì đây là tín hiệu "trễ" của generation
+  cũ, bị bỏ qua có ý, không được ghi đè state của generation mới (đây là
+  điểm mấu chốt: chỉ so generation hiện tại là không đủ, vì đó là 1 biến
+  dùng chung, không tự phân biệt được tín hiệu trễ thuộc lần say() nào).
+  Test ở `test/turn-controller.test.mjs` bằng WS giả (mock `ws.send`),
+  bao phủ: hai response cùng gửi, cancel nhầm response, tín hiệu trễ từ
+  generation đã bị huỷ, retry mở khoá, và luồng bình thường. 18/18 test
+  pass (`node --test`, gồm cả 5 test của Giai đoạn 2).
 
 - [ ] **Giai đoạn 4 - Checkpoint gọi thử đầu-cuối đầu tiên.** Chỉ
   implement phase "hỏi đáp tự do" (`create_response:true`, model tự trả
