@@ -18,10 +18,26 @@
 //     biet 1 luot noi co bi VAD tach thanh nhieu manh hay khong)
 //   - conversation.item.input_audio_transcription.completed
 //   - response.created / response.done (status: completed | cancelled)
+//   - response.function_call_arguments.done (Giai doan 5a, 22/08/2026 -
+//     xem scripts/probe-tool-call.mjs va docs/roadmap.md) - model xin goi
+//     tool. Quan sat that xac nhan tool-call KHONG phai 1 lifecycle rieng:
+//     no la 1 output item nam TRONG 1 response binh thuong (cung response
+//     co the vua co audio "commentary" vua co function_call), nen
+//     response-started/response-ended van bao dung nhu cu, khong can sua
+//     turn-controller.js. Chon dung event nay (khong phai
+//     response.output_item.done, tuy 2 event mang cung du lieu) vi no gon
+//     hon - moi thu (call_id/name/arguments day du) trong 1 cho, khong
+//     long trong `item`. `arguments` GIU NGUYEN string JSON tho (khong
+//     JSON.parse o day) - de con debug duoc khi model sinh JSON hong,
+//     ben goi (dispatcher, chua lam) tu parse va tu xu ly loi.
 //   - error
 // Event nao chua gap/chua can dung se roi vao nhanh "ignored" - khong lam
 // crash, chi bao hieu "chua xu ly", de call-flow tu quyet dinh co bo qua
-// that hay khong.
+// that hay khong. Cac event khac lien quan tool-call quan sat duoc o Giai
+// doan 5a (response.output_item.added/done, response.function_call_
+// arguments.delta, response.output_audio*, response.content_part.*,
+// conversation.item.added/done, rate_limits.updated) CO CHU DICH roi vao
+// "ignored" - chua co nhu cau dung toi, khong phai bo sot.
 
 export function normalizeTurnEvent(rawEvent) {
   if (!rawEvent || typeof rawEvent.type !== "string") {
@@ -63,6 +79,17 @@ export function normalizeTurnEvent(rawEvent) {
         kind: "response-ended",
         responseId: rawEvent.response?.id ?? null,
         status: rawEvent.response?.status ?? "unknown",
+      };
+
+    case "response.function_call_arguments.done":
+      return {
+        kind: "tool-call-requested",
+        responseId: rawEvent.response_id ?? null,
+        itemId: rawEvent.item_id ?? null,
+        callId: rawEvent.call_id ?? null,
+        name: rawEvent.name ?? null,
+        // Chuoi JSON tho, CHUA parse - xem chu thich dau file.
+        arguments: rawEvent.arguments ?? "",
       };
 
     case "error":

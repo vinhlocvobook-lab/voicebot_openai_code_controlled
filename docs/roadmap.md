@@ -183,6 +183,69 @@ cho cả lộ trình này:
   tạm `resolveDanhBoRef` cho tới khi Giai đoạn 6 thay bằng bản thật có
   gate. `danh-bo-arbiter.js` hoãn toàn bộ sang Giai đoạn 6.
 
+- [ ] **Giai đoạn 5a - "Bước 0": quan sát event tool-call thật trước khi
+  làm domain layer.** (Bổ sung 22/08/2026, phát hiện qua câu hỏi của
+  người dùng khi review roadmap: "domain làm ở Giai đoạn 5 có hợp lý
+  không, có cần làm gì trước không?") `turn-signal.js` hiện KHÔNG có
+  case nào cho event tool/function-call trong `normalizeTurnEvent` - chỉ
+  có speech-started/stopped, buffer-committed, transcript-ready,
+  response-started/ended, error. Nghĩa là chưa có gì trong project mới
+  phát hiện được "model vừa gọi tool" - chặn cả phần domain của Giai
+  đoạn 5 lẫn tool `confirm_danh_bo` của Giai đoạn 6b không thể được gọi
+  trong cuộc gọi thật. Hình dạng event tool-call thật của Realtime API
+  CHƯA từng được quan sát trong project này (`probe-realtime.mjs` Giai
+  đoạn 1 và `checkpoint-giai-doan-4.mjs` Giai đoạn 4 chưa từng cấu hình
+  `tools` trong `session.update`) - theo đúng nguyên tắc "quan sát trước
+  khi thiết kế" đã dùng cho VAD ở Giai đoạn 1, không đoán theo tài liệu
+  chung chung.
+
+  Tool-calling không phụ thuộc audio hay text (tính năng ở tầng
+  session/response), nên không cần SIP/Asterisk hay chuẩn bị file âm
+  thanh - dùng lại đúng kiểu "text smoke test" có sẵn trong
+  `probe-realtime.mjs`.
+
+  Nhánh riêng: `giai-doan-5a-tool-call` (tách từ `giai-doan-5-nghiep-vu`
+  theo yêu cầu 22/08/2026, để dễ theo dõi tiến độ và rollback/tái sử
+  dụng riêng nếu cần).
+
+  Đã làm (22/08/2026): `scripts/probe-tool-call.mjs` (`npm run
+  probe:tool`) - kết nối WebSocket thuần (không qua business logic),
+  cấu hình đúng 1 tool thật copy nguyên từ
+  `voice_bot/src/system-prompt.js` (`TOOLS[0]`, `get_bill` - không bịa
+  tool "đồ chơi"), gửi 1 câu hỏi văn bản chắc chắn kích hoạt tool này,
+  rồi đi hết vòng đời thật: model xin gọi tool → script giả lập trả kết
+  quả (`function_call_output`) → gọi `response.create` tiếp → model đọc
+  câu trả lời. Log cả raw (`.jsonl`) lẫn tóm tắt (`.txt`) ra `logs/`.
+
+  Đã chạy thật (22/08/2026, `OPENAI_API_KEY` thật + mạng) - kết quả xác
+  nhận toàn bộ giả thuyết thiết kế:
+  - Tool-call KHÔNG phải 1 lifecycle riêng - nó là 1 output item nằm
+    TRONG 1 response bình thường (cùng response còn có audio
+    "commentary" model tự nói trước khi gọi tool, dù không hề cấu hình
+    system prompt yêu cầu việc này - hành vi mặc định của
+    `gpt-realtime-2.1-mini`). `response-started`/`response-ended` báo
+    đúng như cũ, không cần sửa `turn-controller.js`.
+  - Event tốt nhất để chuẩn hoá: `response.function_call_arguments.done`
+    - gọn, mang đủ `response_id`/`item_id`/`call_id`/`name`/`arguments`
+    (chuỗi JSON đầy đủ) trong 1 event, không cần ráp từ delta hay đọc
+    lồng trong `item` như `response.output_item.done`.
+  - Vòng đời `function_call_output` giả lập → `response.create` → model
+    đọc lại đúng dữ liệu giả - xác nhận format gửi về đúng.
+
+  Đã làm tiếp (22/08/2026): thêm `kind: "tool-call-requested"` vào
+  `normalizeTurnEvent` (`src/session/turn-signal.js`), mang
+  `{responseId, itemId, callId, name, arguments}` - `arguments` GIỮ
+  NGUYÊN chuỗi JSON thô (không `JSON.parse` ở đây, quyết định 22/08/2026
+  để còn debug được khi model sinh JSON hỏng - bên gọi tự parse). Fixture
+  `test/fixtures/tool-call-events.jsonl` copy nguyên dữ liệu thật từ lần
+  chạy trên. 54/54 test pass.
+
+  Còn cần làm: viết dispatcher
+  (`src/call-flow/dispatch-tool-call.js` hay tương đương) tiếp nhận
+  `kind:"tool-call-requested"`, tra tool, gửi `function_call_output` +
+  gọi `turnController.say()` tiếp tục; validate bằng một checkpoint thật
+  kiểu Giai đoạn 4 trước khi quay lại viết domain handlers.
+
 - [ ] **Giai đoạn 6a - Phương án A: code/VAD gom transcript (danh bộ).**
   (Quyết định 21/08/2026: tách Giai đoạn 6 cũ thành 6a/6b làm TUẦN TỰ,
   đúng nguyên tắc "viết ít nhất có thể, tự kiểm chứng trước khi qua giai

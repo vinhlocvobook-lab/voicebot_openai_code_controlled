@@ -61,6 +61,31 @@ test("cac event tho don le duoc chuan hoa dung field", () => {
     normalizeTurnEvent({ type: "error", error: { message: "loi mau" } }),
     { kind: "error", raw: { message: "loi mau" } },
   );
+
+  // [Giai doan 5a, 22/08/2026] Event that, copy nguyen tu
+  // logs/probe-tool-call-1787384731754.jsonl (xem test/fixtures/
+  // tool-call-events.jsonl) - khong bia du lieu.
+  assert.deepEqual(
+    normalizeTurnEvent({
+      type: "response.function_call_arguments.done",
+      response_id: "resp_EFahxMiakpgtNmPzvHapH",
+      item_id: "item_EFahyuVgcPeg9MMUDJytp",
+      call_id: "call_EUrhQ1XPvYSRzx2k",
+      name: "get_bill",
+      arguments: '{"ma_danh_bo":"22082351775","ky":8,"nam":2026}',
+    }),
+    {
+      kind: "tool-call-requested",
+      responseId: "resp_EFahxMiakpgtNmPzvHapH",
+      itemId: "item_EFahyuVgcPeg9MMUDJytp",
+      callId: "call_EUrhQ1XPvYSRzx2k",
+      name: "get_bill",
+      // GIU NGUYEN string JSON tho (khong JSON.parse o day) - quyet dinh
+      // 22/08/2026, de con debug duoc khi model sinh JSON hong; ben goi
+      // (dispatcher) tu parse.
+      arguments: '{"ma_danh_bo":"22082351775","ky":8,"nam":2026}',
+    },
+  );
 });
 
 test("event chua biet toi roi vao nhanh ignored, khong crash", () => {
@@ -70,6 +95,36 @@ test("event chua biet toi roi vao nhanh ignored, khong crash", () => {
   );
   assert.deepEqual(normalizeTurnEvent(null), { kind: "ignored", rawType: undefined });
   assert.deepEqual(normalizeTurnEvent({}), { kind: "ignored", rawType: undefined });
+
+  // [Giai doan 5a] Cac event khac lien quan tool-call CO CHU DICH roi vao
+  // ignored - chua co nhu cau dung toi (xem chu thich dau turn-signal.js),
+  // khong phai bo sot. response.function_call_arguments.done (dong tren)
+  // la event DUNG NHAT duoc chuan hoa.
+  assert.deepEqual(
+    normalizeTurnEvent({
+      type: "response.output_item.added",
+      response_id: "resp_1",
+      item: { id: "item_1", type: "function_call", status: "in_progress", name: "get_bill", call_id: "call_1", arguments: "" },
+    }),
+    { kind: "ignored", rawType: "response.output_item.added" },
+  );
+  assert.deepEqual(
+    normalizeTurnEvent({
+      type: "response.output_item.done",
+      response_id: "resp_1",
+      item: { id: "item_1", type: "function_call", status: "completed", name: "get_bill", call_id: "call_1", arguments: "{}" },
+    }),
+    { kind: "ignored", rawType: "response.output_item.done" },
+  );
+  assert.deepEqual(
+    normalizeTurnEvent({
+      type: "response.function_call_arguments.delta",
+      response_id: "resp_1",
+      call_id: "call_1",
+      delta: "{\"",
+    }),
+    { kind: "ignored", rawType: "response.function_call_arguments.delta" },
+  );
 });
 
 test("buffer-committed giu previousItemId de xau chuoi nhieu manh cung 1 luot (Giai doan 1: VAD tach luot noi)", () => {
@@ -102,6 +157,34 @@ test("replay toan bo fixture: dem dung so luong tin hieu theo kind, khong lam ro
     "response-started": 2,
     "response-ended": 2,
     error: 1,
+  });
+});
+
+test("[Giai doan 5a] replay fixture tool-call that: chi dung 1 tin hieu tool-call-requested, con lai ignored, khong rot event", () => {
+  const raw = loadFixture("tool-call-events.jsonl");
+  const incoming = raw.filter((row) => row.direction === "in");
+  const signals = incoming.map((row) => normalizeTurnEvent(row.event));
+
+  assert.equal(signals.length, incoming.length, "moi event 'in' phai cho ra dung 1 tin hieu, khong duoc rot");
+
+  const tally = {};
+  for (const s of signals) tally[s.kind] = (tally[s.kind] ?? 0) + 1;
+
+  assert.deepEqual(tally, {
+    ignored: 9, // session.created, session.updated, conversation.item.added, 2x output_item.added, function_call_arguments.delta, 2x output_item.done, rate_limits.updated
+    "response-started": 1,
+    "tool-call-requested": 1,
+    "response-ended": 1,
+  });
+
+  const toolCallSignal = signals.find((s) => s.kind === "tool-call-requested");
+  assert.deepEqual(toolCallSignal, {
+    kind: "tool-call-requested",
+    responseId: "resp_EFahxMiakpgtNmPzvHapH",
+    itemId: "item_EFahyuVgcPeg9MMUDJytp",
+    callId: "call_EUrhQ1XPvYSRzx2k",
+    name: "get_bill",
+    arguments: '{"ma_danh_bo":"22082351775","ky":8,"nam":2026}',
   });
 });
 
