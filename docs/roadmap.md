@@ -144,13 +144,44 @@ cho cả lộ trình này:
   luận PASS lấy trực tiếp từ dữ liệu event thô, không cần dòng tóm tắt).
 
 - [ ] **Giai đoạn 5 - Chuyển logic nghiệp vụ có chọn lọc.** Đưa
-  `tools.js`, `system-prompt.js`, `db.js`, `api.js`,
+  `tools.js`, `system-prompt.js`, `api.js`, `log-api.js`,
   `danh-bo-arbiter.js` từ project cũ sang `src/domain/` / `src/
   integrations/` - rà soát: giữ phần nghiệp vụ thật, bỏ phần chỉ tồn tại
   để vá race của kiến trúc cũ (turn-controller đã lo việc đó). Đối chiếu
   với các quyết định đã ghi trong project memory (transcript chỉ để
   debug, gate xác nhận lời nói cho danh bộ trọng tài, SĐT test hardcode)
   để không đánh mất bài học.
+
+  **Sửa 22/08/2026: `db.js` KHÔNG còn được port** - dự án không kết nối
+  MariaDB trực tiếp nữa. Bản đang dùng để ghi log cuộc gọi/ticket là
+  `log-api.js` (gọi REST tới `voicebot-log-api.php`, cùng khuôn mẫu với
+  `api.js`) - đã port thành `src/integrations/calllog-api.js`.
+
+  Đã port (22/08/2026), theo đúng khuôn mẫu: đọc cấu hình từ biến môi
+  trường LƯỜI (trong hàm, không phải hằng số tính 1 lần lúc import) để
+  test được dễ dàng bằng cách giả lập `globalThis.fetch` (bản cũ vốn đã
+  quy ước test theo cách này); bỏ phụ thuộc cứng vào `logger.js`/
+  `api-trace.js` cũ (chưa có bản mới), thay bằng hook tuỳ chọn.
+  - `src/integrations/tongdai-api.js` (từ `api.js`) - 9 hàm gọi API
+    Tổng đài (tra hóa đơn, sản lượng, cúp nước, báo sự cố, chuyển máy...),
+    giữ nguyên các fix kỹ thuật thật (Agent undici riêng cho TLS
+    self-signed, timeout, unwrap response 2 lớp). 13 test (giả lập
+    `fetch`, không gọi API thật).
+  - `src/integrations/calllog-api.js` (từ `log-api.js`) - ghi log cuộc
+    gọi/ticket qua REST, giữ nguyên tắc BẮT BUỘC "lỗi ghi log không được
+    làm sập cuộc gọi" (mọi hàm không bao giờ throw). `getDanhBoHistory`
+    (gợi ý danh bộ theo lịch sử SĐT) cũng port ở đây - CHỈ trả dữ liệu
+    thô, phần gate xác nhận vẫn thuộc Giai đoạn 6, không tự tin dùng ở
+    đây. 15 test.
+  - Tổng test: 53/53 pass (`node --test`). Thêm `undici` vào
+    dependencies; `.env.example` bổ sung `TONGDAI_API_*` và
+    `LOG_API_*`/`VOICEBOT_LOG_FOLDER_ON_API_SERVER`.
+
+  Còn lại của Giai đoạn 5 (chưa làm): `tools.js`/`system-prompt.js`
+  phần nghiệp vụ KHÔNG liên quan danh bộ (tra hóa đơn, tra thủ tục,
+  chuyển tổng đài, để lại lời nhắn...) sang `src/domain/`, dùng interface
+  tạm `resolveDanhBoRef` cho tới khi Giai đoạn 6 thay bằng bản thật có
+  gate. `danh-bo-arbiter.js` hoãn toàn bộ sang Giai đoạn 6.
 
 - [ ] **Giai đoạn 6a - Phương án A: code/VAD gom transcript (danh bộ).**
   (Quyết định 21/08/2026: tách Giai đoạn 6 cũ thành 6a/6b làm TUẦN TỰ,
