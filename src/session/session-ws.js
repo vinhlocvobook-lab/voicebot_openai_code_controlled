@@ -76,6 +76,13 @@ export function connectRealtimeSession({
   transcribeModel,
   transcribeLanguage,
   transcribePrompt,
+  // [Giai doan 5a, 22/08/2026] tools/toolChoice: TUY CHON, mac dinh
+  // khong truyen (giu nguyen hanh vi Giai doan 4 - khong tool nao ca).
+  // Xac nhan bang du lieu that o scripts/probe-tool-call.mjs: tool-call
+  // KHONG phai 1 lifecycle rieng, chi la them field `tools` vao
+  // session.update - khong can sua gi khac o day.
+  tools,
+  toolChoice,
   log = () => {},
   onSignal,
   WebSocketImpl,
@@ -115,6 +122,10 @@ export function connectRealtimeSession({
         },
       },
     };
+    // Chi them field khi THUC SU truyen vao - khong gui `tools: undefined`
+    // (giu nguyen payload y het Giai doan 4 khi khong ai truyen tools).
+    if (tools) sessionUpdate.session.tools = tools;
+    if (toolChoice) sessionUpdate.session.tool_choice = toolChoice;
     ws.send(JSON.stringify(sessionUpdate));
     log("out", sessionUpdate);
   });

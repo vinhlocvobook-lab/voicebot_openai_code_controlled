@@ -240,11 +240,60 @@ cho cả lộ trình này:
   `test/fixtures/tool-call-events.jsonl` copy nguyên dữ liệu thật từ lần
   chạy trên. 54/54 test pass.
 
-  Còn cần làm: viết dispatcher
-  (`src/call-flow/dispatch-tool-call.js` hay tương đương) tiếp nhận
-  `kind:"tool-call-requested"`, tra tool, gửi `function_call_output` +
-  gọi `turnController.say()` tiếp tục; validate bằng một checkpoint thật
-  kiểu Giai đoạn 4 trước khi quay lại viết domain handlers.
+  Đã làm tiếp (22/08/2026): `src/call-flow/dispatch-tool-call.js` -
+  dispatcher nhận tín hiệu `tool-call-requested`, tra `handlers[name]`,
+  `JSON.parse` `arguments` (bắt lỗi JSON hỏng), gọi handler, luôn trả về
+  `{success:true, ...}` hoặc `{success:false, error_code, message}` -
+  không bao giờ throw ra ngoài, giữ đúng nguyên tắc "lỗi không được làm
+  sập cuộc gọi" như `tongdai-api.js`/`calllog-api.js`. Thêm 8 test (62/62
+  tổng). Mở rộng `connectRealtimeSession` (`src/session/session-ws.js`)
+  nhận thêm `tools`/`toolChoice` tùy chọn, chỉ thêm vào `session.update`
+  khi thực sự truyền vào - không đổi hành vi Giai đoạn 4 khi không dùng.
+
+  Đã phát hiện (22/08/2026, từ dữ liệu thật ở `probe-tool-call.mjs`):
+  `response.function_call_arguments.done` (nguồn tín hiệu
+  `tool-call-requested`) đến TRƯỚC `response.done` (nguồn
+  `response-ended`) trong CÙNG 1 response. `dispatch-tool-call.js` gọi
+  `turnController.say()` ngay sau khi xử lý xong tool-call - nghĩa là
+  `say()` có thể được gọi trong lúc `turn-controller.js` còn coi response
+  đó là "active" (`response-ended` chưa tới), có nguy cơ khiến
+  `turn-controller.js` gửi thêm 1 `response.cancel` cho 1 response đang
+  tự hoàn tất bình thường (không cần huỷ). CHỦ ĐÍCH KHÔNG sửa trước - để
+  `scripts/checkpoint-giai-doan-5a.mjs` (chạy THẬT `session-ws.js` +
+  `dispatch-tool-call.js` cùng nhau qua 1 kết nối WebSocket thật,
+  `get_bill` là handler GIẢ LẬP, CHƯA nối `tongdai-api.js` thật - có ý,
+  xem comment đầu file) tự quan sát hiện tượng này trước, đúng nguyên
+  tắc "quan sát trước khi thiết kế".
+
+  [fix 22/08/2026] Trong lúc viết `checkpoint-giai-doan-5a.mjs`, phát
+  hiện `GET_BILL_TOOL.description`, `USER_TEXT` (và `TRANSCRIBE_PROMPT`
+  kế thừa nguyên từ `probe-realtime.mjs` Giai đoạn 1) đang dùng tiếng
+  Việt KHÔNG dấu - không có lý do kỹ thuật, chỉ là mang nhầm thói quen
+  viết comment (luôn không dấu trong project này) sang các trường DỮ
+  LIỆU thực sự được gửi qua API cho model đọc (khác comment - không ai
+  đọc, chỉ model đọc). Tiếng Việt không dấu làm mờ nghĩa hơn với model
+  (`GET_BILL_TOOL.description` ảnh hưởng lúc model quyết định gọi tool),
+  không mô phỏng đúng STT thật vốn luôn trả về có dấu (`USER_TEXT`), và
+  tệ nhất là tự làm giảm hiệu quả của chính nó (`TRANSCRIBE_PROMPT` vốn
+  dùng để mồi model transcribe đúng chính tả). Đã sửa cả 3 sang có dấu
+  đầy đủ, khớp văn phong `voice_bot/src/system-prompt.js` (bản
+  production thật). `scripts/probe-tool-call.mjs` GIỮ NGUYÊN không sửa -
+  file đó đã quan sát xong, log/fixture thật
+  (`test/fixtures/tool-call-events.jsonl`) đã lấy từ đúng lần chạy đó,
+  sửa lại sẽ làm code và log cũ không còn khớp nhau. Nhân đây quyết định
+  luôn: từ giờ nội dung tài liệu (`docs/*.md`) viết tiếng Việt CÓ dấu
+  cho dễ đọc - RIÊNG comment trong code vẫn giữ quy ước không dấu như cũ
+  (không ảnh hưởng API, đã dùng xuyên suốt project).
+
+  Còn cần làm: chạy thật `scripts/checkpoint-giai-doan-5a.mjs` (cần
+  `OPENAI_API_KEY` thật trong `.env`), xem log ngay sau dòng "CHU Y -
+  diem can quan sat" để biết vụ `response.cancel` nghi ngờ ở trên có
+  thực sự xảy ra và gây vấn đề gì không - từ đó quyết định
+  `dispatch-tool-call.js` có cần sửa (vd hoãn `say()` tới khi
+  `response-ended` của đúng response chứa tool-call đó tới) hay giữ
+  nguyên hành vi hiện tại. Sau khi checkpoint pass và quyết định xong,
+  commit `src/session/session-ws.js` + `scripts/checkpoint-giai-doan-
+  5a.mjs`, rồi quay lại viết domain handlers còn lại của Giai đoạn 5.
 
 - [ ] **Giai đoạn 6a - Phương án A: code/VAD gom transcript (danh bộ).**
   (Quyết định 21/08/2026: tách Giai đoạn 6 cũ thành 6a/6b làm TUẦN TỰ,
