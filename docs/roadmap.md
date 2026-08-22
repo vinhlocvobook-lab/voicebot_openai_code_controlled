@@ -106,9 +106,42 @@ cho cả lộ trình này:
   generation đã bị huỷ, retry mở khoá, và luồng bình thường. 18/18 test
   pass (`node --test`, gồm cả 5 test của Giai đoạn 2).
 
-- [ ] **Giai đoạn 4 - Checkpoint gọi thử đầu-cuối đầu tiên.** Chỉ
+- [x] **Giai đoạn 4 - Checkpoint gọi thử đầu-cuối đầu tiên.** Chỉ
   implement phase "hỏi đáp tự do" (`create_response:true`, model tự trả
-  lời). `src/session/session-ws.js` là orchestrator mỏng nối các lớp lại.
+  lời, code KHÔNG gọi `say()`). `src/session/session-ws.js` là
+  orchestrator mỏng: tách `createSessionWs({ws, log})` (logic thuần, nhận
+  message tho -> `normalizeTurnEvent` -> `turnController.handleSignal`,
+  test bằng WS giả) và `connectRealtimeSession(opts)` (mở kết nối thật,
+  cần `WebSocketImpl` truyền vào - không tự import "ws" để phần thuần
+  không phụ thuộc mạng). `test/session-ws.test.mjs`: 7/7 test pass (tổng
+  25/25 gồm cả Giai đoạn 2+3).
+
+  Checkpoint chạy thật (`scripts/checkpoint-giai-doan-4.mjs` - CHỈ để
+  test, tự đẩy audio từ file WAV mẫu vào, khác `session-ws.js` thật
+  không tự làm việc này - xem "Ràng buộc kiến trúc"; cũng khác
+  `probe-realtime.mjs` của Giai đoạn 1, giữ nguyên không sửa): chạy với
+  `samples/1_hoa_don_tien_nuoc_24k.wav` - transcript ra đúng nguyên câu
+  "Xin chào, cho tôi hỏi hóa đơn tiền nước tháng này là bao nhiêu?"
+  (không bị VAD cắt vụn vì không có khoảng ngừng dài), `response-started`
+  ở +7543ms, `response-ended` (status completed) ở +12650ms, không có
+  event lỗi nào - luồng hỏi đáp tự do chạy trọn vẹn qua đúng 3 lớp
+  turn-signal -> turn-controller -> session-ws. Log:
+  `logs/checkpoint4-1_hoa_don_tien_nuoc_24k-<timestamp>.txt`.
+
+  Quyết định thiết kế đã bàn (21/08/2026, chưa sửa code): `turn-controller.js`
+  GIỮ NGUYÊN như Giai đoạn 3 - response do server tự tạo (không qua
+  `say()`) hiện chưa được track là active (hàng đợi rỗng -> cảnh báo rồi
+  bỏ qua có ý, thấy rõ trong log: "hang doi rong"). Chủ động KHÔNG đoán
+  trước cách xử lý đúng (huỷ được lúc nào, nội dung đã nói có phù hợp để
+  cắt hay không) - để dành làm thí nghiệm thật khi thực sự cần thiết kế
+  ngắt lời (dự kiến Giai đoạn 7).
+
+  Bug nhỏ phát hiện + đã sửa: trong `checkpoint-giai-doan-4.mjs`,
+  `txtStream.end()` là bất đồng bộ, gọi `process.exit()` ngay sau đó làm
+  mất phần tóm tắt cuối chưa kịp flush xuống đĩa (dữ liệu event chính vẫn
+  ghi đủ, chỉ mất khối tóm tắt PASS/FAIL) - sửa bằng cách đợi callback của
+  `.end()` rồi mới `exit()`. Không ảnh hưởng tới kết quả checkpoint (kết
+  luận PASS lấy trực tiếp từ dữ liệu event thô, không cần dòng tóm tắt).
 
 - [ ] **Giai đoạn 5 - Chuyển logic nghiệp vụ có chọn lọc.** Đưa
   `tools.js`, `system-prompt.js`, `db.js`, `api.js`,
