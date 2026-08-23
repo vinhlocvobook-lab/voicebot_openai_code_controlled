@@ -293,6 +293,76 @@ test("[bo sung 23/08/2026] payload THAT gui len OpenAI (conversation.item.create
   assert.equal(loggedPayload.item.call_id, "call_11");
 });
 
+// ─── [fix 23/08/2026] doc action/doc_cho_khach tu output cua tool ─────────
+
+test("[fix 23/08/2026] tool tra ve action:'no_reply' (vd wait_for_user) -> KHONG goi say() sau khi response ket thuc", async () => {
+  const { dispatcher, sayCalls } = makeFakes({
+    wait_for_user: async () => ({ success: true, action: "no_reply", message: "im lang cho khach" }),
+  });
+
+  await dispatcher.handleSignal({
+    kind: "tool-call-requested",
+    responseId: "resp_no_reply",
+    callId: "call_no_reply",
+    name: "wait_for_user",
+    arguments: "{}",
+  });
+  await dispatcher.handleSignal({ kind: "response-ended", responseId: "resp_no_reply", status: "completed" });
+
+  assert.equal(sayCalls.length, 0, "action:no_reply phai chan say(), khong duoc goi du response da ket thuc");
+});
+
+test("[fix 23/08/2026] tool tra ve doc_cho_khach -> say({mode:'verbatim', text: doc_cho_khach}) thay vi mode auto", async () => {
+  const { dispatcher, sayCalls } = makeFakes({
+    get_procedure_info: async () => ({ success: true, doc_cho_khach: "Dạ, thủ tục này cần giấy tờ ABC." }),
+  });
+
+  await dispatcher.handleSignal({
+    kind: "tool-call-requested",
+    responseId: "resp_verbatim",
+    callId: "call_verbatim",
+    name: "get_procedure_info",
+    arguments: "{}",
+  });
+  await dispatcher.handleSignal({ kind: "response-ended", responseId: "resp_verbatim", status: "completed" });
+
+  assert.equal(sayCalls.length, 1);
+  assert.deepEqual(sayCalls[0], { mode: "verbatim", text: "Dạ, thủ tục này cần giấy tờ ABC." });
+});
+
+test("[fix 23/08/2026] tool KHONG co action/doc_cho_khach -> giu hanh vi cu, say() mode auto (khong tham so)", async () => {
+  const { dispatcher, sayCalls } = makeFakes({
+    get_bill: async () => ({ success: true, message: "Kỳ 8: 200.000đ" }),
+  });
+
+  await dispatcher.handleSignal({ kind: "tool-call-requested", responseId: "resp_auto", callId: "call_auto", name: "get_bill", arguments: "{}" });
+  await dispatcher.handleSignal({ kind: "response-ended", responseId: "resp_auto", status: "completed" });
+
+  assert.equal(sayCalls.length, 1);
+  assert.deepEqual(sayCalls[0], undefined, "say() goi khong tham so (mode auto mac dinh), giong hanh vi truoc ban fix nay");
+});
+
+test("[fix 23/08/2026] action:'end_call'/'transfer_to_agent' CHUA duoc xu ly rieng - van say() nhu binh thuong (cho toi Giai doan 8 noi SIP that)", async () => {
+  const { dispatcher, sayCalls } = makeFakes({
+    end_call: async () => ({ success: true, action: "end_call", message: "Kết thúc cuộc gọi." }),
+  });
+
+  await dispatcher.handleSignal({ kind: "tool-call-requested", responseId: "resp_end", callId: "call_end", name: "end_call", arguments: "{}" });
+  await dispatcher.handleSignal({ kind: "response-ended", responseId: "resp_end", status: "completed" });
+
+  assert.equal(sayCalls.length, 1, "action:end_call chua co xu ly rieng, van say() binh thuong (co y, xem comment dau file)");
+});
+
+test("[fix 23/08/2026] action:no_reply van ap dung dung ca o nhanh phong thu (thieu responseId, say() ngay)", async () => {
+  const { dispatcher, sayCalls } = makeFakes({
+    wait_for_user: async () => ({ success: true, action: "no_reply" }),
+  });
+
+  await dispatcher.handleSignal({ kind: "tool-call-requested", callId: "call_no_resp_id", name: "wait_for_user", arguments: "{}" });
+
+  assert.equal(sayCalls.length, 0, "du khong co responseId de cho, action:no_reply van phai chan say()");
+});
+
 test("runTool() dung doc lap (khong can send/turnController gia) - tien ich khi debug rieng 1 tool", async () => {
   const { dispatcher } = makeFakes({ get_bill: async (args) => ({ success: true, echo: args }) });
 

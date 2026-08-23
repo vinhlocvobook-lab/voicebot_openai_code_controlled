@@ -57,10 +57,47 @@
 //      (call_id + JSON.stringify(output) lam string long trong `item`),
 //      neu co loi boc sai (vd nham call_id, JSON.stringify hong) se thay
 //      o day ma khong thay o #2.
+//
+// [fix 23/08/2026, sau khi dong Giai doan 5b] Doc 2 field dac biet trong
+// OUTPUT cua tool (khong phai trong tin hieu) de quyet dinh CACH goi say():
+//   - `action:"no_reply"` (hien tai chi wait_for_user tra ve) -> KHONG goi
+//     say() - de model THAT SU im lang cho khach noi tiep, thay vi luon
+//     tra loi mot cai gi do sau moi tool call (truoc ban fix nay, goi
+//     wait_for_user se KHONG co tac dung gi - bot van tu noi binh thuong).
+//   - `doc_cho_khach` (call-control.js/procedures.js tra ve khi co kich
+//     ban BAT BUOC doc nguyen van - vd huong dan giay to thu tuc, cau hoi
+//     xac nhan doi tuong) -> goi say({mode:"verbatim", text: doc_cho_khach})
+//     thay vi say({mode:"auto"}) - tranh model tu tom tat/dien dat lai lam
+//     rot mat chi tiet bat buoc (dia chi van phong, giay to bat buoc - da
+//     tung la loi that o ban cu, xem comment trong procedures.js).
+//   - Khong co ca 2 field tren -> giu hanh vi cu: say({mode:"auto"}).
+// CO Y CHUA XU LY: action:"end_call"/"transfer_to_agent" - can goi API
+// that de cup/chuyen may (SIP that, Giai doan 8 chua toi) nen tam thoi
+// VAN goi say() nhu binh thuong cho 2 action nay (giong nhu khong co
+// action gi ca) - se xu ly khi noi SIP that.
 export function createToolDispatcher({ send, turnController, log = () => {}, handlers = {} } = {}) {
   // responseId dang "no" 1 lan goi say(), cho toi khi thay dung response-
-  // ended cua no - xem ghi chu tren dau file.
-  const waitingForResponseEnded = new Set();
+  // ended cua no - xem ghi chu tren dau file. Map (khong phai Set nua) vi
+  // can nho lai CA output cua tool de quyet dinh cach say() dung luc
+  // response ket thuc (xem sayForOutput duoi day).
+  const waitingForResponseEnded = new Map();
+
+  // [fix 23/08/2026] Quyet dinh CACH goi say() dua tren output cua tool -
+  // dung chung cho ca nhanh binh thuong (cho response-ended) lan nhanh
+  // phong thu (thieu responseId, goi say() ngay) de khong lech hanh vi
+  // giua 2 nhanh.
+  function sayForOutput(output) {
+    if (output?.action === "no_reply") {
+      log("info", 'dispatch-tool-call: tool tra ve action:"no_reply" - KHONG goi say(), de model im lang cho khach noi tiep');
+      return;
+    }
+    if (output?.doc_cho_khach) {
+      log("info", "dispatch-tool-call: tool co doc_cho_khach - goi say(mode:verbatim) doc nguyen van, khong de model tu dien dat");
+      turnController.say({ mode: "verbatim", text: output.doc_cho_khach });
+      return;
+    }
+    turnController.say();
+  }
 
   // Tra + goi dung 1 tool, LUON tra ve 1 object output (khong bao gio
   // throw) - tach rieng khoi handleSignal() de test duoc doc lap, khong
@@ -111,7 +148,7 @@ export function createToolDispatcher({ send, turnController, log = () => {}, han
       send(outgoingItem);
 
       if (responseId) {
-        waitingForResponseEnded.add(responseId);
+        waitingForResponseEnded.set(responseId, output);
         log(
           "info",
           `dispatch-tool-call: da gui function_call_output, hoan say() toi khi response ${responseId} ket thuc`,
@@ -119,16 +156,18 @@ export function createToolDispatcher({ send, turnController, log = () => {}, han
       } else {
         // Phong thu - chua thay xay ra voi du lieu that (turn-signal.js
         // luon dien responseId tu response_id cua event), nhung neu thieu
-        // thi khong co gi de cho ca, giu hanh vi cu: goi say() ngay.
+        // thi khong co gi de cho ca, goi say() ngay - van doc dung output
+        // (action/doc_cho_khach) qua sayForOutput, khong lech hanh vi.
         log("warn", "dispatch-tool-call: tin hieu tool-call-requested thieu responseId, goi say() ngay (khong doi duoc)");
-        turnController.say();
+        sayForOutput(output);
       }
       return;
     }
 
     if (signal.kind === "response-ended" && waitingForResponseEnded.has(signal.responseId)) {
+      const output = waitingForResponseEnded.get(signal.responseId);
       waitingForResponseEnded.delete(signal.responseId);
-      turnController.say();
+      sayForOutput(output);
     }
   }
 
