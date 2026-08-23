@@ -15,18 +15,25 @@
 // (da co 13 test rieng voi fetch gia lap). Noi voi API that la buoc sau,
 // khi co san moi truong/API key that cua Tong dai.
 //
-// [22/08/2026] DIEM CAN QUAN SAT KY (chua biet truoc, khong doan): du
-// lieu that o probe-tool-call.mjs cho thay response.function_call_arguments
-// .done (nguon cua tin hieu tool-call-requested) den TRUOC response.done
-// (nguon cua response-ended) trong CUNG 1 response. dispatch-tool-call.js
-// goi turnController.say() ngay khi xu ly xong tool-call-requested - nghia
-// la say() co the duoc goi trong luc turnController con coi response 1 la
-// "active" (response-ended chua toi), khien turn-controller.js gui them
-// 1 response.cancel cho response 1 (dang tu hoan tat, khong can huy).
-// KHONG ro day co gay loi gi that su khong (vd OpenAI tra loi error, huy
-// nham lam mat function_call output) - CHU DICH KHONG sua truoc, de
-// checkpoint nay tu quan sat that roi moi quyet dinh co can sua khong,
-// dung nguyen tac "quan sat truoc khi thiet ke" cua du an.
+// [22/08/2026] DA QUAN SAT + DA SUA (khong con la diem treo): du lieu that
+// lan chay dau (logs/checkpoint5a-1787392228657.txt) cho thay response.
+// function_call_arguments.done (nguon tin hieu tool-call-requested) den
+// TRUOC response.done (nguon response-ended) trong CUNG 1 response - luc
+// do dispatch-tool-call.js goi turnController.say() NGAY, khien turn-
+// controller.js gui THEM 1 response.cancel thua cho response dang tu hoan
+// tat, bi OpenAI tu choi (error response_cancel_not_active). Khong pha
+// hong cuoc goi that su, nhung la nhieu/lang phi API - da xac nhan bang
+// sequence diagram (npm run diagram, xem logs/*.sequence.html).
+//
+// SUA (dispatch-tool-call.js): khong con goi say() ngay - hoan lai toi khi
+// thay dung response-ended cua CHINH response chua tool-call do. Lan chay
+// lai lan 2 (logs/checkpoint5a-1787470375067.txt) xac nhan het error, NHUNG
+// lo ra 1 loi TICH HOP moi o chinh checkpoint nay: onSignal() ben duoi truoc
+// day CHI goi dispatcher.handleSignal() khi kind==="tool-call-requested" -
+// dispatcher (sau fix) can ca tin hieu response-ended de biet luc nao goi
+// say(), nhung response-ended khong bao gio duoc chuyen toi dispatcher nen
+// say() khong bao giờ duoc goi, cuoc goi treo toi khi TIMEOUT 20s. Da sua:
+// goi dispatcher.handleSignal() cho MOI tin hieu (xem trong onSignal()).
 //
 // CACH CHAY (tren may that, can OPENAI_API_KEY trong .env):
 //   node scripts/checkpoint-giai-doan-5a.mjs
@@ -151,22 +158,31 @@ const { ws, turnController } = connectRealtimeSession({
     if (signal.kind === "tool-call-requested") {
       toolCallInfo = signal;
       tee(
-        "[checkpoint-5a] CHU Y - diem can quan sat: sap goi dispatcher (se goi turnController.say() " +
-          "ngay), trong khi response chua tao tin hieu response-ended tuong ung - xem cac dong sau day " +
-          "co response.cancel/error bat thuong lien quan responseId=" + signal.responseId + " khong.",
+        "[checkpoint-5a] CHU Y - diem can quan sat: dispatcher se gui function_call_output NGAY nhung " +
+          "(sau fix 22/08/2026) HOAN turnController.say() toi khi thay dung response-ended cua " +
+          "responseId=" + signal.responseId + " - xem cac dong sau day KHONG con response.cancel/error " +
+          "nao nua, va say() (dong -> response.create thu 2) chi xuat hien SAU dong tin hieu response-ended.",
       );
-      dispatcher
-        .handleSignal(signal)
-        .then(() => {
-          functionOutputSent = true;
-          tee("[checkpoint-5a] Dispatcher da gui function_call_output + goi say() xong.");
-          maybeFinish();
-        })
-        .catch((err) => {
-          tee("[checkpoint-5a] Dispatcher loi bat ngo (KHONG duoc xay ra, dispatcher phai tu bat loi):", err.message);
-          finish(1);
-        });
     }
+
+    // [fix 22/08/2026] Goi dispatcher.handleSignal() cho MOI tin hieu, khong
+    // rieng gi tool-call-requested nua - dispatch-tool-call.js (sau fix) can
+    // ca response-ended de biet luc nao an toan goi say() (xem ghi chu dau
+    // file do). handleSignal() tu bo qua im lang cac kind/responseId khong
+    // lien quan (da co test rieng) nen goi cho moi tin hieu la an toan.
+    dispatcher
+      .handleSignal(signal)
+      .then(() => {
+        if (signal.kind === "tool-call-requested") {
+          functionOutputSent = true;
+          tee("[checkpoint-5a] Dispatcher da gui function_call_output (say() con hoan lai).");
+          maybeFinish();
+        }
+      })
+      .catch((err) => {
+        tee("[checkpoint-5a] Dispatcher loi bat ngo (KHONG duoc xay ra, dispatcher phai tu bat loi):", err.message);
+        finish(1);
+      });
 
     if (signal.kind === "error") {
       sawError = true;

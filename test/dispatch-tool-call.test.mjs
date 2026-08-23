@@ -5,6 +5,14 @@
 // dung 4 buoc (tra handler -> parse arguments -> goi handler -> gui
 // function_call_output + say()) va nguyen tac "loi o day khong duoc lam
 // sap cuoc goi" (giong tongdai-api.js/calllog-api.js).
+//
+// [fix 22/08/2026] say() KHONG con duoc goi ngay sau function_call_output
+// nua - phai doi dung tin hieu response-ended cua CHINH response chua
+// tool-call do (xem ghi chu dau src/call-flow/dispatch-tool-call.js, xac
+// nhan bang checkpoint-giai-doan-5a.mjs chay that + sequence diagram).
+// Cac test duoi day vi vay them buoc: goi tool-call-requested -> kiem tra
+// sayCalls VAN CON RONG -> goi response-ended DUNG responseId -> kiem tra
+// sayCalls moi len 1.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -21,7 +29,7 @@ function makeFakes(handlers) {
   return { dispatcher, sent, sayCalls };
 }
 
-test("tool co handler, arguments hop le -> goi dung handler, gui function_call_output dung call_id, roi say()", async () => {
+test("tool co handler, arguments hop le -> goi dung handler, gui function_call_output dung call_id, CHUA say() ngay, chi say() sau khi response ket thuc", async () => {
   const { dispatcher, sent, sayCalls } = makeFakes({
     get_bill: async (args) => ({ success: true, data: [{ ma_danh_bo: args.ma_danh_bo, tong_tien: 185000 }] }),
   });
@@ -43,15 +51,19 @@ test("tool co handler, arguments hop le -> goi dung handler, gui function_call_o
     success: true,
     data: [{ ma_danh_bo: "22082351775", tong_tien: 185000 }],
   });
-  assert.equal(sayCalls.length, 1, "phai goi turnController.say() de model noi tiep");
+  assert.equal(sayCalls.length, 0, "CHUA duoc say() ngay - phai doi response-ended (fix 22/08/2026)");
+
+  await dispatcher.handleSignal({ kind: "response-ended", responseId: "resp_1", status: "completed" });
+  assert.equal(sayCalls.length, 1, "say() dung 1 lan sau khi thay response-ended dung responseId");
 });
 
-test("tool khong co trong bang handlers -> tra loi TOOL_NOT_FOUND, van gui + say(), khong throw", async () => {
+test("tool khong co trong bang handlers -> tra loi TOOL_NOT_FOUND, van gui, va van say() sau khi response ket thuc (khong throw)", async () => {
   const { dispatcher, sent, sayCalls } = makeFakes({});
 
   await assert.doesNotReject(() =>
     dispatcher.handleSignal({
       kind: "tool-call-requested",
+      responseId: "resp_2",
       callId: "call_2",
       name: "get_outages",
       arguments: "{}",
@@ -61,10 +73,13 @@ test("tool khong co trong bang handlers -> tra loi TOOL_NOT_FOUND, van gui + say
   const output = JSON.parse(sent[0].item.output);
   assert.equal(output.success, false);
   assert.equal(output.error_code, "TOOL_NOT_FOUND");
+  assert.equal(sayCalls.length, 0);
+
+  await dispatcher.handleSignal({ kind: "response-ended", responseId: "resp_2", status: "completed" });
   assert.equal(sayCalls.length, 1);
 });
 
-test("arguments JSON hong -> tra loi INVALID_ARGUMENTS, khong goi handler, khong throw", async () => {
+test("arguments JSON hong -> tra loi INVALID_ARGUMENTS, khong goi handler, khong throw, van say() dung lich", async () => {
   let handlerCalled = false;
   const { dispatcher, sent, sayCalls } = makeFakes({
     get_bill: async () => {
@@ -75,6 +90,7 @@ test("arguments JSON hong -> tra loi INVALID_ARGUMENTS, khong goi handler, khong
 
   await dispatcher.handleSignal({
     kind: "tool-call-requested",
+    responseId: "resp_3",
     callId: "call_3",
     name: "get_bill",
     arguments: "{khong phai json hop le",
@@ -84,6 +100,9 @@ test("arguments JSON hong -> tra loi INVALID_ARGUMENTS, khong goi handler, khong
   const output = JSON.parse(sent[0].item.output);
   assert.equal(output.success, false);
   assert.equal(output.error_code, "INVALID_ARGUMENTS");
+  assert.equal(sayCalls.length, 0);
+
+  await dispatcher.handleSignal({ kind: "response-ended", responseId: "resp_3", status: "completed" });
   assert.equal(sayCalls.length, 1);
 });
 
@@ -92,13 +111,19 @@ test("arguments rong ('') -> coi nhu {} (khong crash) - vd tool khong can tham s
     wait_for_user: async (args) => ({ success: true, receivedArgs: args }),
   });
 
-  await dispatcher.handleSignal({ kind: "tool-call-requested", callId: "call_4", name: "wait_for_user", arguments: "" });
+  await dispatcher.handleSignal({
+    kind: "tool-call-requested",
+    responseId: "resp_4",
+    callId: "call_4",
+    name: "wait_for_user",
+    arguments: "",
+  });
 
   const output = JSON.parse(sent[0].item.output);
   assert.deepEqual(output.receivedArgs, {});
 });
 
-test("handler that bai (throw) -> tra loi HANDLER_ERROR, KHONG throw ra ngoai (loi khong duoc lam sap cuoc goi)", async () => {
+test("handler that bai (throw) -> tra loi HANDLER_ERROR, KHONG throw ra ngoai (loi khong duoc lam sap cuoc goi), van say() dung lich sau response-ended", async () => {
   const { dispatcher, sent, sayCalls } = makeFakes({
     get_bill: async () => {
       throw new Error("tongdai-api sap");
@@ -106,26 +131,63 @@ test("handler that bai (throw) -> tra loi HANDLER_ERROR, KHONG throw ra ngoai (l
   });
 
   await assert.doesNotReject(() =>
-    dispatcher.handleSignal({ kind: "tool-call-requested", callId: "call_5", name: "get_bill", arguments: "{}" }),
+    dispatcher.handleSignal({ kind: "tool-call-requested", responseId: "resp_5", callId: "call_5", name: "get_bill", arguments: "{}" }),
   );
 
   const output = JSON.parse(sent[0].item.output);
   assert.equal(output.success, false);
   assert.equal(output.error_code, "HANDLER_ERROR");
-  assert.equal(sayCalls.length, 1, "van phai say() de model biet ma tiep tuc, khong de cuoc goi treo");
+  assert.equal(sayCalls.length, 0, "chua say() ngay du handler loi - van phai cho response ket thuc");
+
+  await dispatcher.handleSignal({ kind: "response-ended", responseId: "resp_5", status: "completed" });
+  assert.equal(sayCalls.length, 1, "van phai say() sau cung de model biet ma tiep tuc, khong de cuoc goi treo");
 });
 
-test("tin hieu khong phai kind tool-call-requested -> bo qua im lang, khong gui gi, khong say()", async () => {
+test("tin hieu khong phai kind tool-call-requested/response-ended cho response dang cho -> bo qua im lang, khong gui gi, khong say()", async () => {
   const { dispatcher, sent, sayCalls } = makeFakes({ get_bill: async () => ({ success: true }) });
 
-  await dispatcher.handleSignal({ kind: "response-ended", responseId: "resp_1", status: "completed" });
+  // response-ended cho 1 responseId CHUA TUNG co tool-call-requested nao
+  // dang cho - khong duoc coi la "no" gi ca, bo qua.
+  await dispatcher.handleSignal({ kind: "response-ended", responseId: "resp_khong_lien_quan", status: "completed" });
   await dispatcher.handleSignal(null);
+  await dispatcher.handleSignal({ kind: "speech-started", atMs: 0 });
 
   assert.equal(sent.length, 0);
   assert.equal(sayCalls.length, 0);
 });
 
-test("[Giai doan 5a] dung DUNG tin hieu that (copy tu logs/probe-tool-call-1787384731754.jsonl) voi handler gia -> vong doi day du", async () => {
+test("response-ended cua 1 response KHAC (khong khop responseId dang cho) khong lam say() som - phai dung response dung moi say()", async () => {
+  const { dispatcher, sent, sayCalls } = makeFakes({
+    get_bill: async () => ({ success: true }),
+  });
+
+  await dispatcher.handleSignal({
+    kind: "tool-call-requested",
+    responseId: "resp_A",
+    callId: "call_A",
+    name: "get_bill",
+    arguments: "{}",
+  });
+  assert.equal(sayCalls.length, 0);
+
+  // response-ended cua 1 response KHONG lien quan (vd response truoc do
+  // con dang don dep) - khong duoc "an nham" vao hang doi cua resp_A.
+  await dispatcher.handleSignal({ kind: "response-ended", responseId: "resp_khac_khong_phai_A", status: "completed" });
+  assert.equal(sayCalls.length, 0, "response-ended sai responseId khong duoc kich say()");
+
+  await dispatcher.handleSignal({ kind: "response-ended", responseId: "resp_A", status: "completed" });
+  assert.equal(sayCalls.length, 1, "response-ended DUNG responseId moi kich say()");
+});
+
+test("[phong thu] tin hieu tool-call-requested THIEU responseId (khong nen xay ra voi du lieu that) -> say() ngay, khong co gi de cho", async () => {
+  const { dispatcher, sayCalls } = makeFakes({ get_bill: async () => ({ success: true }) });
+
+  await dispatcher.handleSignal({ kind: "tool-call-requested", callId: "call_no_resp", name: "get_bill", arguments: "{}" });
+
+  assert.equal(sayCalls.length, 1, "khong co responseId de cho thi giu hanh vi cu: say() ngay");
+});
+
+test("[Giai doan 5a] dung DUNG tin hieu that (copy tu logs/probe-tool-call-1787384731754.jsonl) voi handler gia -> vong doi day du, say() dung sau response-ended that", async () => {
   const { dispatcher, sent, sayCalls } = makeFakes({
     get_bill: async (args) => ({
       success: true,
@@ -148,6 +210,11 @@ test("[Giai doan 5a] dung DUNG tin hieu that (copy tu logs/probe-tool-call-17873
   const output = JSON.parse(sent[0].item.output);
   assert.equal(output.data[0].ky, 8);
   assert.equal(output.data[0].nam, 2026);
+  assert.equal(sayCalls.length, 0, "phai doi response-ended that cua resp_EFahxMiakpgtNmPzvHapH");
+
+  // response.done that cua CHINH response chua tool-call nay (xem
+  // logs/probe-tool-call-1787384731754.jsonl, response.status:"completed").
+  await dispatcher.handleSignal({ kind: "response-ended", responseId: "resp_EFahxMiakpgtNmPzvHapH", status: "completed" });
   assert.equal(sayCalls.length, 1);
 });
 

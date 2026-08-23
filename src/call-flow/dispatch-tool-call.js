@@ -18,8 +18,29 @@
 // hong, handler that bai) deu duoc bat lai, tra ve 1 function_call_output
 // BAO LOI cho model (de model tu xin loi khach hoac thu cach khac),
 // khong throw ra ngoai handleSignal().
-
+//
+// [fix 22/08/2026, xac nhan bang scripts/checkpoint-giai-doan-5a.mjs chay
+// that + sequence diagram] KHONG goi turnController.say() NGAY sau khi
+// gui function_call_output nua. Du lieu that xac nhan:
+// response.function_call_arguments.done (nguon tin hieu tool-call-
+// requested) LUON den TRUOC response.done (nguon response-ended) cho
+// CUNG 1 response - goi say() ngay o day khien turn-controller.js con
+// thay response do "active", tu dong gui THEM 1 response.cancel thua,
+// bi OpenAI tu choi (error response_cancel_not_active). Khong pha hong
+// cuoc goi (response van tu hoan tat binh thuong), nhung la nhieu/lang
+// phi 1 vong goi API moi lan co tool-call.
+//
+// SUA: gui function_call_output NGAY (khong doi - giu loi the toc do,
+// tool co the chay song song luc model con dang noi cau "de toi xem
+// thu..."), nhung CHI goi say() sau khi thay dung tin hieu response-
+// ended cua CHINH response chua tool-call do. Luc nay turn-controller.js
+// da tu don activeResponseId ve rong (qua handleSignal cua no), nen
+// say() se khong con thay responseInFlight nua - khong gui cancel thua.
 export function createToolDispatcher({ send, turnController, log = () => {}, handlers = {} } = {}) {
+  // responseId dang "no" 1 lan goi say(), cho toi khi thay dung response-
+  // ended cua no - xem ghi chu tren dau file.
+  const waitingForResponseEnded = new Set();
+
   // Tra + goi dung 1 tool, LUON tra ve 1 object output (khong bao gio
   // throw) - tach rieng khoi handleSignal() de test duoc doc lap, khong
   // can gia lap send()/turnController.
@@ -47,20 +68,42 @@ export function createToolDispatcher({ send, turnController, log = () => {}, han
   }
 
   // Ham chinh - goi tu onSignal() cua caller (xem session-ws.js) moi khi
-  // gap tin hieu kind:"tool-call-requested". Bo qua im lang neu tin hieu
-  // khong dung kind - de caller co the truyen thang moi tin hieu vao day
-  // ma khong can tu loc truoc.
+  // co tin hieu MOI, khong chi rieng tool-call-requested nua - can ca
+  // response-ended de biet luc nao an toan goi say() (xem ghi chu dau
+  // file). Cac kind khac bi bo qua im lang - caller truyen thang moi tin
+  // hieu vao day ma khong can tu loc truoc.
   async function handleSignal(signal) {
-    if (!signal || signal.kind !== "tool-call-requested") return;
+    if (!signal || typeof signal.kind !== "string") return;
 
-    const { callId, name, arguments: rawArgs } = signal;
-    const output = await runTool(name, rawArgs);
+    if (signal.kind === "tool-call-requested") {
+      const { callId, name, arguments: rawArgs, responseId } = signal;
+      const output = await runTool(name, rawArgs);
 
-    send({
-      type: "conversation.item.create",
-      item: { type: "function_call_output", call_id: callId, output: JSON.stringify(output) },
-    });
-    turnController.say();
+      send({
+        type: "conversation.item.create",
+        item: { type: "function_call_output", call_id: callId, output: JSON.stringify(output) },
+      });
+
+      if (responseId) {
+        waitingForResponseEnded.add(responseId);
+        log(
+          "info",
+          `dispatch-tool-call: da gui function_call_output, hoan say() toi khi response ${responseId} ket thuc`,
+        );
+      } else {
+        // Phong thu - chua thay xay ra voi du lieu that (turn-signal.js
+        // luon dien responseId tu response_id cua event), nhung neu thieu
+        // thi khong co gi de cho ca, giu hanh vi cu: goi say() ngay.
+        log("warn", "dispatch-tool-call: tin hieu tool-call-requested thieu responseId, goi say() ngay (khong doi duoc)");
+        turnController.say();
+      }
+      return;
+    }
+
+    if (signal.kind === "response-ended" && waitingForResponseEnded.has(signal.responseId)) {
+      waitingForResponseEnded.delete(signal.responseId);
+      turnController.say();
+    }
   }
 
   return { handleSignal, runTool };

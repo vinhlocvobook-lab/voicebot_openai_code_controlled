@@ -183,7 +183,7 @@ cho cả lộ trình này:
   tạm `resolveDanhBoRef` cho tới khi Giai đoạn 6 thay bằng bản thật có
   gate. `danh-bo-arbiter.js` hoãn toàn bộ sang Giai đoạn 6.
 
-- [ ] **Giai đoạn 5a - "Bước 0": quan sát event tool-call thật trước khi
+- [x] **Giai đoạn 5a - "Bước 0": quan sát event tool-call thật trước khi
   làm domain layer.** (Bổ sung 22/08/2026, phát hiện qua câu hỏi của
   người dùng khi review roadmap: "domain làm ở Giai đoạn 5 có hợp lý
   không, có cần làm gì trước không?") `turn-signal.js` hiện KHÔNG có
@@ -285,15 +285,45 @@ cho cả lộ trình này:
   cho dễ đọc - RIÊNG comment trong code vẫn giữ quy ước không dấu như cũ
   (không ảnh hưởng API, đã dùng xuyên suốt project).
 
-  Còn cần làm: chạy thật `scripts/checkpoint-giai-doan-5a.mjs` (cần
-  `OPENAI_API_KEY` thật trong `.env`), xem log ngay sau dòng "CHU Y -
-  diem can quan sat" để biết vụ `response.cancel` nghi ngờ ở trên có
-  thực sự xảy ra và gây vấn đề gì không - từ đó quyết định
-  `dispatch-tool-call.js` có cần sửa (vd hoãn `say()` tới khi
-  `response-ended` của đúng response chứa tool-call đó tới) hay giữ
-  nguyên hành vi hiện tại. Sau khi checkpoint pass và quyết định xong,
-  commit `src/session/session-ws.js` + `scripts/checkpoint-giai-doan-
-  5a.mjs`, rồi quay lại viết domain handlers còn lại của Giai đoạn 5.
+  Đã chạy thật lần 1 (22/08/2026, `logs/checkpoint5a-1787392228657.txt`)
+  - xác nhận ĐÚNG nghi ngờ: `dispatch-tool-call.js` gọi `say()` ngay khiến
+  `turn-controller.js` gửi 1 `response.cancel` thừa cho response đang tự
+  hoàn tất, bị OpenAI từ chối (`error: response_cancel_not_active`).
+  KHÔNG phá hỏng cuộc gọi (response vẫn `completed` bình thường, dữ liệu
+  không mất) nhưng là nhiễu/lãng phí 1 vòng gọi API mỗi lần có tool-call -
+  xem trực quan bằng `npm run diagram --
+  logs/checkpoint5a-1787392228657.txt`.
+
+  Đã sửa (22/08/2026): `dispatch-tool-call.js` không còn gọi `say()` ngay
+  sau `function_call_output` nữa - gửi kết quả ngay (giữ lợi thế tốc độ,
+  tool có thể chạy trong lúc model còn đang nói câu "để tôi xem thử..."),
+  nhưng CHỈ gọi `say()` sau khi thấy đúng tín hiệu `response-ended` của
+  CHÍNH response chứa tool-call đó - `handleSignal()` giờ nhận mọi tín
+  hiệu (không riêng `tool-call-requested`), giữ 1 `Set` các responseId
+  đang "nợ" 1 lần `say()`. 10 test (2 test mới: response-ended của
+  response khác không bị "ăn nhầm"; thiếu responseId thì `say()` ngay -
+  phòng thủ, chưa gặp với dữ liệu thật).
+
+  Chạy thật lần 2 (`logs/checkpoint5a-1787470375067.txt`) hết hẳn
+  `response.cancel`/`error`, nhưng lộ ra 1 lỗi TÍCH HỢP khác: cuộc gọi bị
+  treo tới TIMEOUT 20s, vì `checkpoint-giai-doan-5a.mjs` trước đó chỉ
+  chuyển tín hiệu `tool-call-requested` cho dispatcher - `response-ended`
+  không bao giờ tới nơi, nên `say()` không bao giờ được gọi. Sửa: chuyển
+  MỌI tín hiệu cho `dispatcher.handleSignal()` (tự bỏ qua kind/responseId
+  không liên quan, đã có test riêng).
+
+  Chạy thật lần 3 (`logs/checkpoint5a-1787470917606.txt`) - **PASS**: gửi
+  `function_call_output` ngay ở +2837ms, `response-ended` tới ở +2839ms,
+  `-> response.create` (say() hoãn) chỉ xuất hiện NGAY SAU dòng đó, không
+  còn `response.cancel`/`error` nào, 2/2 response hoàn tất, model đọc
+  đúng kết quả giả lập. Xem trực quan bằng
+  `logs/checkpoint5a-1787470917606.sequence.html`.
+
+  Vòng nối dây tool-calling (turn-signal.js → session-ws.js →
+  dispatch-tool-call.js) coi như xong, đã kiểm chứng qua dữ liệu thật.
+  Còn cần làm: quay lại viết domain handlers còn lại của Giai đoạn 5
+  (`billing.js`/`outages.js`/`tickets.js`/`call-control.js`/
+  `procedures.js`/`tool-router.js`, dùng `resolveDanhBoRef` tạm).
 
 - [ ] **Giai đoạn 6a - Phương án A: code/VAD gom transcript (danh bộ).**
   (Quyết định 21/08/2026: tách Giai đoạn 6 cũ thành 6a/6b làm TUẦN TỰ,
