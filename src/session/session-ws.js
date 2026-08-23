@@ -31,9 +31,59 @@
 //     createSessionWs() ben trong. Ham nay KHONG co unit test (vi can
 //     mang that) - chi duoc xac nhan qua checkpoint chay that
 //     (scripts/checkpoint-giai-doan-4.mjs).
-
+//
+// [bo sung 23/08/2026, Giai doan 6a] Truoc day turn_detection ("normal" -
+// semantic_vad/eagerness low/create_response:true) hardcode CO DINH, khong
+// co cach doi giua chung 1 cuoc goi. Giai doan 6a (thu danh bo qua giong
+// noi) can 1 mode THU HAI ("digits" - server_vad, create_response:false)
+// de model KHONG tu tra loi trong luc khach doc so (xem docs/roadmap.md
+// Giai doan 6a + doi chieu ban cu voi agent con - toan bo tham so
+// threshold/prefix_padding_ms/silence_duration_ms la gia tri DA HIEU CHINH
+// qua production that cua ban cu, khong phai so moi doan). Them
+// `buildTurnDetectionConfig(mode, opts)` (ham thuan, xuat rieng de test
+// khong can WS) + `setVadMode(mode, opts)` (gui session.update MOI voi
+// turn_detection tuong ung - CHI doi field nay, khong dung lai
+// transcription/tools da cau hinh tu dau, dung dinh dang OpenAI cho phep
+// session.update TUNG PHAN). `connectRealtimeSession` cung dung LAI dung
+// `buildTurnDetectionConfig("normal")` cho session.update DAU TIEN - tranh
+// 2 noi dinh nghia trung lap cau hinh "normal" (1 luc xay dung, 1 luc doi
+// ve) roi lech nhau qua thoi gian.
 import { normalizeTurnEvent } from "./turn-signal.js";
 import { createTurnController } from "./turn-controller.js";
+
+// Xac nhan tham so tu voice_bot/src/session-ws.js ban cu (_setVadMode,
+// _VAD_DIGITS_THRESHOLD/_VAD_DIGITS_SILENCE_MS) - KHONG doan:
+//   - "digits": server_vad (KHONG phai semantic_vad - semantic_vad chot
+//     luot theo NGU NGHIA, khach ngat hoi giua cac cum so bi coi la noi
+//     xong, tao response giua chung - dung nguyen nhan sinh ra loi that
+//     rtc_u2_E5eDfB96UnJE6iDWfPbRX cua ban cu). threshold 0.6/
+//     prefix_padding_ms 500/silence_duration_ms 2000 la gia tri DA HIEU
+//     CHINH qua nhieu cuoc goi that, khong phai mac dinh cua OpenAI.
+//     create_response:false - model KHONG duoc tu tra loi, CODE
+//     (danh-bo-collect.js, Giai doan 6a) tu quyet dinh khi nao noi.
+//   - "normal": semantic_vad/eagerness low/create_response:true - dung
+//     HET cau hinh cu (Giai doan 1-5) cua che do hoi dap tu do.
+export function buildTurnDetectionConfig(mode, opts = {}) {
+  if (mode === "digits") {
+    return {
+      type: "server_vad",
+      threshold: opts.threshold ?? 0.6,
+      prefix_padding_ms: opts.prefixPaddingMs ?? 500,
+      silence_duration_ms: opts.silenceDurationMs ?? 2000,
+      create_response: false,
+      interrupt_response: true,
+    };
+  }
+  if (mode === "normal") {
+    return {
+      type: "semantic_vad",
+      eagerness: "low",
+      create_response: true,
+      interrupt_response: true,
+    };
+  }
+  throw new Error(`session-ws: turn_detection mode khong hop le: "${mode}" (chi nhan "normal" hoac "digits")`);
+}
 
 // PHAN LOGIC THUAN - nhan `ws` (chi can co .send(string)), tra ve cac ham
 // de xu ly message nhan duoc. Khong tu mo ket noi, khong tu dong gi ca.
@@ -60,7 +110,23 @@ export function createSessionWs({ ws, log = () => {} } = {}) {
     return signal;
   }
 
-  return { turnController, handleRawMessage };
+  // [bo sung 23/08/2026, Giai doan 6a] Doi turn_detection giua chung 1
+  // cuoc goi - xem ghi chu dau file. Tra ve DUNG object turn_detection da
+  // gui (tien ich cho test/log doi chieu), khong tu luu state "dang o mode
+  // nao" o day (ben goi - danh-bo-collect.js - tu quan ly state do, module
+  // nay CHI la "ong dan" gui session.update).
+  function setVadMode(mode, opts) {
+    const turn_detection = buildTurnDetectionConfig(mode, opts);
+    const sessionUpdate = {
+      type: "session.update",
+      session: { type: "realtime", audio: { input: { turn_detection } } },
+    };
+    ws.send(JSON.stringify(sessionUpdate));
+    log("out", sessionUpdate);
+    return turn_detection;
+  }
+
+  return { turnController, handleRawMessage, setVadMode };
 }
 
 // KET NOI THAT toi OpenAI Realtime API + gui session.update dung DUNG cau
@@ -112,12 +178,11 @@ export function connectRealtimeSession({
               language: transcribeLanguage,
               prompt: transcribePrompt,
             },
-            turn_detection: {
-              type: "semantic_vad",
-              eagerness: "low",
-              create_response: true,
-              interrupt_response: true,
-            },
+            // [sua 23/08/2026, Giai doan 6a] Dung lai buildTurnDetectionConfig
+            // thay vi hardcode rieng o day - tranh 2 noi dinh nghia "normal"
+            // (o day luc xay session dau tien, o setVadMode luc doi ve) roi
+            // lech nhau qua thoi gian sua doi sau nay.
+            turn_detection: buildTurnDetectionConfig("normal"),
           },
         },
       },
@@ -130,5 +195,5 @@ export function connectRealtimeSession({
     log("out", sessionUpdate);
   });
 
-  return { ws, turnController: sessionWs.turnController };
+  return { ws, turnController: sessionWs.turnController, setVadMode: sessionWs.setVadMode };
 }

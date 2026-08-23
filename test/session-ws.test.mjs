@@ -1,14 +1,20 @@
 // test/session-ws.test.mjs
 //
-// Giai doan 4 (xem docs/roadmap.md). Chi test createSessionWs() - phan
-// LOGIC THUAN (nhan message tho -> chuan hoa -> feed turn-controller).
-// KHONG test connectRealtimeSession() o day - ham do can ket noi mang
-// that toi OpenAI, duoc xac nhan rieng qua checkpoint chay that
-// (scripts/checkpoint-giai-doan-4.mjs), khong phai bang node:test.
+// Giai doan 4 (xem docs/roadmap.md) - test createSessionWs() bang WS gia,
+// KHONG can mang that/OPENAI_API_KEY. Module nay tu ghi ro "PHAN LOGIC
+// THUAN - test duoc bang WS gia" nhung chua co file test - bo sung o day
+// khi mo rong module cho Giai doan 6a (buildTurnDetectionConfig/setVadMode),
+// tranh sua code khong co gi phu.
+//
+// [bo sung 23/08/2026, Giai doan 6a] Trong tam file nay: buildTurnDetectionConfig
+// (mode "normal"/"digits") + setVadMode - phan MOI duy nhat cua session-ws.js
+// o Giai doan 6a. handleRawMessage/turnController da duoc xac nhan gian
+// tiep qua checkpoint-giai-doan-4.mjs/5a.mjs/5b.mjs chay that (khong lap
+// lai test o day, chi thieu unit test cho phan THUAN chua tung viet).
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createSessionWs } from "../src/session/session-ws.js";
+import { createSessionWs, buildTurnDetectionConfig } from "../src/session/session-ws.js";
 
 function createMockWs() {
   const sent = [];
@@ -20,112 +26,102 @@ function createMockWs() {
   };
 }
 
-test("handleRawMessage: parse event tho, tra ve tin hieu da chuan hoa dung nhu turn-signal.js", () => {
-  const ws = createMockWs();
-  const { handleRawMessage } = createSessionWs({ ws });
-
-  const signal = handleRawMessage(
-    JSON.stringify({ type: "input_audio_buffer.speech_started", audio_start_ms: 1234 })
-  );
-
-  assert.deepEqual(signal, { kind: "speech-started", atMs: 1234 });
+test("buildTurnDetectionConfig('normal') tra ve dung cau hinh semantic_vad da dung tu Giai doan 1-5", () => {
+  assert.deepEqual(buildTurnDetectionConfig("normal"), {
+    type: "semantic_vad",
+    eagerness: "low",
+    create_response: true,
+    interrupt_response: true,
+  });
 });
 
-test("handleRawMessage: nhan Buffer (nhu ws that gui ve) chu khong chi string", () => {
-  const ws = createMockWs();
-  const { handleRawMessage } = createSessionWs({ ws });
-
-  const raw = Buffer.from(JSON.stringify({ type: "input_audio_buffer.speech_stopped", audio_end_ms: 5678 }));
-  const signal = handleRawMessage(raw);
-
-  assert.deepEqual(signal, { kind: "speech-stopped", atMs: 5678 });
+test("buildTurnDetectionConfig('digits') tra ve dung tham so DA HIEU CHINH tu ban cu (server_vad, create_response:false)", () => {
+  assert.deepEqual(buildTurnDetectionConfig("digits"), {
+    type: "server_vad",
+    threshold: 0.6,
+    prefix_padding_ms: 500,
+    silence_duration_ms: 2000,
+    create_response: false,
+    interrupt_response: true,
+  });
 });
 
-test("handleRawMessage: JSON hong -> tra ve undefined, KHONG throw, khong lam sap phien", () => {
+test("buildTurnDetectionConfig('digits') nhan tham so tuy chinh qua opts (vd doi silence_duration_ms qua env o tang tren)", () => {
+  const cfg = buildTurnDetectionConfig("digits", { threshold: 0.5, prefixPaddingMs: 300, silenceDurationMs: 1500 });
+  assert.equal(cfg.threshold, 0.5);
+  assert.equal(cfg.prefix_padding_ms, 300);
+  assert.equal(cfg.silence_duration_ms, 1500);
+  assert.equal(cfg.create_response, false, "create_response luon false o mode digits, khong cho opts ghi de");
+});
+
+test("buildTurnDetectionConfig: mode khong hop le -> nem loi ro rang, khong tra ve undefined im lang", () => {
+  assert.throws(() => buildTurnDetectionConfig("khong_ton_tai"), /mode khong hop le/);
+});
+
+test("setVadMode('digits') gui DUNG 1 session.update chi doi turn_detection, khong dung lai transcription/tools cu", () => {
   const ws = createMockWs();
-  const errors = [];
-  const { handleRawMessage } = createSessionWs({
-    ws,
-    log: (level, msg) => {
-      if (level === "error") errors.push(msg);
+  const { setVadMode } = createSessionWs({ ws });
+
+  setVadMode("digits");
+
+  assert.equal(ws.sent.length, 1);
+  assert.deepEqual(ws.sent[0], {
+    type: "session.update",
+    session: {
+      type: "realtime",
+      audio: {
+        input: {
+          turn_detection: {
+            type: "server_vad",
+            threshold: 0.6,
+            prefix_padding_ms: 500,
+            silence_duration_ms: 2000,
+            create_response: false,
+            interrupt_response: true,
+          },
+        },
+      },
     },
   });
-
-  const signal = handleRawMessage("{ day khong phai json hop le");
-
-  assert.equal(signal, undefined);
-  assert.equal(errors.length, 1, "phai log 1 loi");
 });
 
-test("handleRawMessage: event khong quen -> chuan hoa thanh ignored, khong crash", () => {
+test("setVadMode('normal') doi VAD ve dung cau hinh cu, va tra ve DUNG turn_detection vua gui (de log/doi chieu)", () => {
   const ws = createMockWs();
-  const { handleRawMessage } = createSessionWs({ ws });
+  const { setVadMode } = createSessionWs({ ws });
 
-  const signal = handleRawMessage(JSON.stringify({ type: "output_audio_buffer.started" }));
+  const returned = setVadMode("normal");
 
-  assert.deepEqual(signal, { kind: "ignored", rawType: "output_audio_buffer.started" });
-});
-
-test("handleRawMessage: feed dung vao turn-controller - say() truoc, response.created khop -> active", () => {
-  const ws = createMockWs();
-  const { turnController, handleRawMessage } = createSessionWs({ ws });
-
-  assert.equal(turnController.isResponseActive(), false);
-  turnController.say({ mode: "auto" });
-  assert.equal(turnController.isResponseActive(), true);
-
-  handleRawMessage(JSON.stringify({ type: "response.created", response: { id: "resp_XYZ" } }));
-  assert.equal(turnController.isResponseActive(), true, "van active, da co id that");
-
-  handleRawMessage(JSON.stringify({ type: "response.done", response: { id: "resp_XYZ", status: "completed" } }));
-  assert.equal(turnController.isResponseActive(), false, "ket thuc sach, tro ve idle");
-});
-
-test("handleRawMessage: response.created MA KHONG QUA say() (server tu tao, create_response:true) - khong crash, turnController tu bo qua co y (hanh vi da biet tu Giai doan 3, chua doi o Giai doan 4)", () => {
-  const ws = createMockWs();
-  const warnings = [];
-  const { turnController, handleRawMessage } = createSessionWs({
-    ws,
-    log: (level, msg) => {
-      if (level === "warn") warnings.push(msg);
-    },
+  assert.deepEqual(returned, {
+    type: "semantic_vad",
+    eagerness: "low",
+    create_response: true,
+    interrupt_response: true,
   });
-
-  // Khong goi say() truoc - mo phong dung kich ban Giai doan 4: server tu
-  // tao response vi create_response:true, code khong chu dong goi.
-  const signal = handleRawMessage(JSON.stringify({ type: "response.created", response: { id: "resp_AUTO" } }));
-
-  assert.deepEqual(signal, { kind: "response-started", responseId: "resp_AUTO" });
-  assert.equal(warnings.length, 1, "turn-controller phai canh bao hang doi rong (hanh vi da biet, xem ghi chu dau file)");
-  assert.equal(
-    turnController.isResponseActive(),
-    false,
-    "CHUA duoc track la active - day la gioi han da biet cua Giai doan 4, khong phai bug moi"
-  );
+  assert.deepEqual(ws.sent[0].session.audio.input.turn_detection, returned);
 });
 
-test("handleRawMessage: nhieu message lien tiep dung thu tu, khong lam rot event nao", () => {
+test("setVadMode duoc log('out') dung nhu moi lan gui khac - checkpoint script tee() duoc, khong can sua rieng", () => {
   const ws = createMockWs();
-  const seen = [];
-  const { handleRawMessage } = createSessionWs({ ws });
+  const logCalls = [];
+  const { setVadMode } = createSessionWs({ ws, log: (level, payload) => logCalls.push({ level, payload }) });
 
-  const rawEvents = [
-    { type: "session.updated" },
-    { type: "input_audio_buffer.speech_started", audio_start_ms: 0 },
-    { type: "input_audio_buffer.speech_stopped", audio_end_ms: 2000 },
-    { type: "input_audio_buffer.committed", item_id: "item_1", previous_item_id: null },
-    { type: "conversation.item.input_audio_transcription.completed", item_id: "item_1", transcript: "Xin chao" },
-    { type: "response.created", response: { id: "resp_1" } },
-    { type: "response.done", response: { id: "resp_1", status: "completed" } },
-  ];
+  setVadMode("digits");
 
-  for (const e of rawEvents) {
-    seen.push(handleRawMessage(JSON.stringify(e)));
-  }
+  const outLog = logCalls.find((c) => c.level === "out");
+  assert.ok(outLog, "phai co dong log('out') cho session.update vua gui");
+  assert.equal(outLog.payload.type, "session.update");
+});
 
-  assert.equal(seen.length, rawEvents.length);
-  assert.deepEqual(
-    seen.map((s) => s.kind),
-    ["ignored", "speech-started", "speech-stopped", "buffer-committed", "transcript-ready", "response-started", "response-ended"]
-  );
+test("goi setVadMode nhieu lan lien tiep (digits -> normal -> digits) - moi lan gui dung 1 session.update rieng, khong tich luy/lan nhau", () => {
+  const ws = createMockWs();
+  const { setVadMode } = createSessionWs({ ws });
+
+  setVadMode("digits");
+  setVadMode("normal");
+  setVadMode("digits");
+
+  assert.equal(ws.sent.length, 3);
+  assert.equal(ws.sent[0].session.audio.input.turn_detection.type, "server_vad");
+  assert.equal(ws.sent[1].session.audio.input.turn_detection.type, "semantic_vad");
+  assert.equal(ws.sent[2].session.audio.input.turn_detection.type, "server_vad");
 });
