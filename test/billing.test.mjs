@@ -43,8 +43,12 @@ test("docTienVN: so co dau cham ngan cach hang nghin dang string van doc dung (k
   assert.equal(docTienVN("1180266"), "một triệu một trăm tám mươi nghìn hai trăm sáu mươi sáu đồng");
 });
 
-test("fmtNgay: '2026-06-30 15:14:54' -> '30/06/2026'", () => {
+test("fmtNgay: '2026-06-30 15:14:54' (ISO, gia dinh cu) -> '30/06/2026'", () => {
   assert.equal(fmtNgay("2026-06-30 15:14:54"), "30/06/2026");
+});
+
+test("[fix 23/08/2026, xac nhan qua goi API THAT] fmtNgay: '22/08/2026 06:42:04' (DD/MM/YYYY, dinh dang THAT API dang tra) -> '22/08/2026', cat bo gio:phut:giay", () => {
+  assert.equal(fmtNgay("22/08/2026 06:42:04"), "22/08/2026");
 });
 
 test("fmtNgay: gia tri khong dung dinh dang -> tra ve nguyen si (khong throw)", () => {
@@ -241,4 +245,48 @@ test("callState duoc truyen xuyen suot toi resolveDanhBoRef (du stub khong dung)
 
   assert.equal(resolveCalls.length, 1);
   assert.equal(resolveCalls[0].callState, fakeCallState);
+});
+
+// ─── Du lieu THAT (khong doan/mock tuong tuong) ─────────────────────────────
+//
+// [23/08/2026] Goi THAT toi API test cua CNTA qua tunnel (danh ba
+// "22023251775"), xac nhan bang lenh:
+//   node --input-type=module -e '...getTrangThaiTT("22023251775", null, null)...'
+// Ket qua that (dan lai nguyen van lam fixture, KHONG chinh sua) da lat ra
+// 1 lech that voi gia dinh cu: NgayThanhToan tra ve dang "DD/MM/YYYY
+// HH:MM:SS" ("22/08/2026 06:42:04"), khong phai ISO "YYYY-MM-DD..." nhu
+// comment/gia dinh cu tu ban cu - xem fix fmtNgay o billing.js cung ngay.
+const DU_LIEU_THAT_22023251775 = {
+  Nam: 2026,
+  Ky: 8,
+  TongTien: 428413,
+  SanLuong: 24,
+  TrangThaiThanhToan: "Đã thanh toán",
+  NgayThanhToan: "22/08/2026 06:42:04",
+  DonViThanhToan: "VCB",
+};
+
+test("[du lieu THAT 23/08/2026, danh bo 22023251775] handleGetBill dung dung field API that tra ve, KHONG con doc thua gio:phut:giay", async () => {
+  const { handlers } = makeFakes({
+    resolveValue: "22023251775",
+    getTrangThaiTT: async () => ({ success: true, data: [DU_LIEU_THAT_22023251775] }),
+  });
+
+  const out = await handlers.handleGetBill({ ma_danh_bo: "22023251775", ky: 8, nam: 2026 }, {});
+
+  assert.equal(out.success, true);
+  assert.equal(
+    out.message,
+    "Kỳ 8/2026: sản lượng 24 m³, tổng tiền bốn trăm hai mươi tám nghìn bốn trăm mười ba đồng, đã thanh toán ngày 22/08/2026."
+  );
+  assert.deepEqual(out.data, [
+    {
+      ky: "8/2026",
+      san_luong_m3: 24,
+      tong_tien: "bốn trăm hai mươi tám nghìn bốn trăm mười ba đồng",
+      tong_tien_so: 428413,
+      trang_thai_thanh_toan: "Đã thanh toán",
+      ngay_thanh_toan: "22/08/2026", // KHONG con "22/08/2026 06:42:04"
+    },
+  ]);
 });

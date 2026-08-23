@@ -46,10 +46,24 @@
 // import thang tongdai-api.js, nhan qua tham so - test bang ham gia,
 // khong goi mang that (xem test/billing.test.mjs).
 
-/** Format "2026-06-30 15:14:54" -> "30/06/2026" (doc tu nhien qua thoai). */
+// [fix 23/08/2026, xac nhan bang goi THAT toi API test qua tunnel (ma danh
+// bo 22023251775, xem test/billing.test.mjs)] Comment/gia dinh cu (ke tu
+// ban cu voice_bot/src/tools.js) noi NgayThanhToan dang ISO
+// "2026-06-30 15:14:54" (YYYY-MM-DD). Du lieu THAT nhan duoc lai la
+// "22/08/2026 06:42:04" (DD/MM/YYYY, da dung thu tu ngay/thang/nam, chi
+// thua phan gio:phut:giay) - regex cu KHONG match dinh dang nay, roi vao
+// nhanh fallback tra nguyen van ca cum gio:phut:giay, khien cau tra loi
+// TTS doc thua ("...ngay 22/08/2026 06:42:04" thay vi "...ngay
+// 22/08/2026"). Nhan CA HAI dinh dang (ISO cu + DD/MM/YYYY that xac nhan)
+// - phong truong hop noi khac trong he thong van tra ISO, khong chi sua
+// theo dinh dang moi nhat quan sat duoc.
 export function fmtNgay(s) {
-  const m = String(s ?? "").match(/^(\d{4})-(\d{2})-(\d{2})/);
-  return m ? `${m[3]}/${m[2]}/${m[1]}` : s;
+  const str = String(s ?? "");
+  const iso = str.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (iso) return `${iso[3]}/${iso[2]}/${iso[1]}`;
+  const vn = str.match(/^(\d{2})\/(\d{2})\/(\d{4})/);
+  if (vn) return `${vn[1]}/${vn[2]}/${vn[3]}`;
+  return s;
 }
 
 /** So -> chu tieng Viet doc qua TTS (vd 185000 -> "một trăm tám mươi lăm nghìn đồng"). */
