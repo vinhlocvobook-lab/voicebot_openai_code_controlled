@@ -115,3 +115,34 @@ test("handleCreateTicket: thanh cong, API khong tra message -> dung cau mac dinh
   const out = await handlers.handleCreateTicket({ ma_danh_bo: "22082351775", loai: "su_co", mo_ta: "x" }, {});
   assert.equal(out.message, "Phiếu tiếp nhận sự cố đã được ghi nhận.");
 });
+
+// ─── Du lieu THAT (khong doan/mock tuong tuong) ─────────────────────────────
+//
+// [23/08/2026] Goi THAT toi API test cua CNTA qua tunnel (danh ba
+// "22023251775", chinh chu du an tu chay lenh, mo_ta co ghi ro "[TEST KY
+// THUAT]" de phan biet voi su co that - xem hoi thoai docs/roadmap.md muc
+// Giai doan 5b). Ket qua that:
+//   { success: true, message: "Tiếp nhận sự cố thành công.",
+//     data: [{ danhBa: "22023251775", noidungbao: "[phan_anh] [TEST...]" }] }
+// KHONG phat hien lech gi voi gia dinh cu. Khac billing.js: `data` la 1
+// MANG (khong phai object phang) - nhung handleCreateTicket khong dung
+// toi cau truc ben trong `data`, chi forward nguyen r.data, nen khong anh
+// huong.
+test("[du lieu THAT 23/08/2026, danh bo 22023251775] handleCreateTicket dung dung field API that tra ve (data la MANG)", async () => {
+  const { handlers } = makeFakes({
+    baoSuCo: async () => ({
+      success: true,
+      message: "Tiếp nhận sự cố thành công.",
+      data: [{ danhBa: "22023251775", noidungbao: "[phan_anh] [TEST KY THUAT - Giai doan 5b, khong phai su co that, vui long bo qua/xoa phieu nay]" }],
+    }),
+  });
+
+  const out = await handlers.handleCreateTicket(
+    { ma_danh_bo: "22023251775", loai: "phan_anh", mo_ta: "[TEST KY THUAT - Giai doan 5b, khong phai su co that, vui long bo qua/xoa phieu nay]" },
+    { callerPhone: "0900000000" }
+  );
+
+  assert.equal(out.success, true);
+  assert.equal(out.message, "Tiếp nhận sự cố thành công.");
+  assert.deepEqual(out.data, [{ danhBa: "22023251775", noidungbao: "[phan_anh] [TEST KY THUAT - Giai doan 5b, khong phai su co that, vui long bo qua/xoa phieu nay]" }]);
+});
