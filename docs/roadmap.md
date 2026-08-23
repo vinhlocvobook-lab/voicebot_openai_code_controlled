@@ -319,10 +319,60 @@ cho cả lộ trình này:
   đúng kết quả giả lập. Xem trực quan bằng
   `logs/checkpoint5a-1787470917606.sequence.html`.
 
-  Vòng nối dây tool-calling (turn-signal.js → session-ws.js →
-  dispatch-tool-call.js) coi như xong, đã kiểm chứng qua dữ liệu thật.
-  Còn cần làm: quay lại viết domain handlers còn lại của Giai đoạn 5
-  (`billing.js`/`outages.js`/`tickets.js`/`call-control.js`/
+  Đã chạy thật thêm qua đường AUDIO+VAD thật (23/08/2026,
+  `scripts/checkpoint-giai-doan-5a-audio.mjs`, tái dùng cách stream WAV
+  của Giai đoạn 4) - trả lời câu hỏi còn treo từ Giai đoạn 4: cảnh báo
+  "hàng đợi rỗng" (response do server tự tạo qua `semantic_vad`, không
+  qua `say()`, chưa từng được `turn-controller.js` track là active) CÓ
+  xảy ra thật khi có tool-call, nhưng KHÔNG ảnh hưởng gì tới fix `say()`
+  hoãn - vì `dispatch-tool-call.js` theo dõi độc lập bằng `responseId`
+  thô, không phụ thuộc `turn-controller.js` có track hay không. Log:
+  `logs/checkpoint5a-audio-5a_hoi_tien_nuoc_22082351775_24k-*.txt`.
+
+  Hiện tượng phụ quan sát được (không phải bug): response 1 (commentary
+  trước tool-call) đôi khi bị OpenAI tự huỷ (`status:"cancelled"`) - do
+  `semantic_vad`+`interrupt_response` phát hiện khách nói tiếp giữa chừng
+  (file mẫu có khoảng ngừng giữa 2 câu). Xác nhận KHÔNG phải do code tự
+  gửi `response.cancel` (không có dòng `-> response.cancel` nào trong
+  log ở thời điểm đó) - hành vi hoàn toàn phía server, không cần sửa gì.
+
+  Bổ sung quan sát (23/08/2026, theo yêu cầu chủ dự án): log/diagram
+  trước đó thiếu 3 điều khi debug - lời AI nói, input/output khi gọi
+  tool, và input của chính `say()`. Đã bổ sung:
+  - `turn-signal.js`: thêm `kind:"ai-said"` (từ
+    `response.output_audio_transcript.done`, dùng field `transcript` -
+    xác nhận bằng dữ liệu thật trong
+    `logs/probe-tool-call-1787384731754.jsonl`, không đoán). Tiện thể sửa
+    1 bug có sẵn ở `log-to-sequence.js`: `summarizeSignal()` đọc nhầm
+    `signal.transcript` thay vì `signal.text` cho tín hiệu
+    `transcript-ready`, khiến diagram từ trước tới giờ luôn in ra
+    "undefined" thay vì lời khách nói thật.
+  - `dispatch-tool-call.js`: thêm 3 dòng log tách biệt quanh 1 lần gọi
+    tool (mỗi dòng bắt 1 loại lỗi khác nhau nếu có) - input nhận được
+    (trước khi gọi handler), output handler trả về, và payload THẬT gửi
+    lên OpenAI (khác output ở chỗ đã "bọc" call_id +
+    `JSON.stringify(output)` - lỗi bọc sai sẽ thấy ở đây mà không thấy ở
+    dòng output).
+  - `turn-controller.js`: thêm log input (`opts`) ngay dòng đầu `say()` -
+    đặt ở ĐÂY (không phải ở từng nơi gọi) vì đây là cửa DUY NHẤT được
+    phép gửi `response.create` - mọi nơi gọi say() (dispatch-tool-call.js,
+    checkpoint script, sau này call-flow/*) tự động được log, không cần
+    nhớ thêm ở từng chỗ gọi. Log đặt TRƯỚC bước validate nên vẫn thấy
+    được input ngay cả khi say() sau đó ném lỗi.
+  - 2 checkpoint script (`giai-doan-5a.mjs`/`-audio.mjs`): nâng điều kiện
+    PASS từ "2 response kết thúc" lên "3 response kết thúc"
+    (`RESPONSES_ENDED_FOR_PASS`) - để tự xác nhận `say()` hoãn không chỉ
+    ĐƯỢC GỌI (đã thấy dòng `-> response.create`) mà còn THỰC SỰ HOÀN TẤT
+    1 response mới (`response.done`), không cần chờ tới khi nối SIP thật
+    mới biết được điều này.
+  - Tổng test: 80/80 pass (`node --test`, từ 74 lên 80 qua 3 lần bổ sung
+    trên).
+
+  Giai đoạn 5a coi như đóng hẳn - vòng nối dây tool-calling đã kiểm
+  chứng qua CẢ text lẫn audio+VAD thật, quan sát được đầy đủ input/output
+  ở mọi điểm nối (turn-signal → dispatch-tool-call → turn-controller →
+  OpenAI). Còn cần làm: quay lại viết domain handlers còn lại của Giai
+  đoạn 5 (`billing.js`/`outages.js`/`tickets.js`/`call-control.js`/
   `procedures.js`/`tool-router.js`, dùng `resolveDanhBoRef` tạm).
 
 - [ ] **Giai đoạn 6a - Phương án A: code/VAD gom transcript (danh bộ).**
