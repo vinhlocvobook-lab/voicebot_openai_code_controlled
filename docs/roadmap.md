@@ -183,6 +183,27 @@ cho cả lộ trình này:
   tạm `resolveDanhBoRef` cho tới khi Giai đoạn 6 thay bằng bản thật có
   gate. `danh-bo-arbiter.js` hoãn toàn bộ sang Giai đoạn 6.
 
+  **Giai đoạn 5b (bổ sung 23/08/2026)** - tên gọi cho đúng phần "còn lại"
+  này, đặt song song với 5a cho dễ theo dõi. Quyết định thứ tự (đã bàn
+  với chủ dự án): làm domain handlers (billing.js trước, dùng
+  `resolveDanhBoRef` tạm "tin thẳng" giá trị model gửi vào tool - KHÔNG
+  xác thực gì) TRƯỚC Giai đoạn 6 (thu thập/xác nhận danh bộ), dù về mặt
+  sản phẩm phải CÓ danh bộ mới gọi được `get_bill`. Lý do: Giai đoạn 6 là
+  phase rủi ro cao nhất (VAD tách số, xác nhận, trọng tài) - tách domain
+  layer ra làm trước, kiểm chứng bằng unit test (fetch giả lập) + mã danh
+  bộ gài cứng trong checkpoint script (không cần chờ luồng thu thập thật),
+  để khi làm Giai đoạn 6 đã có sẵn "nửa sau" ổn định mà thử. `resolveDanhBoRef`
+  và `resolveDanhBo` thật (Giai đoạn 6) dùng CHUNG 1 hợp đồng
+  (`{ok:true, value}` / `{ok:false, error}`) - khi Giai đoạn 6 xong chỉ
+  cần đổi 1 dòng import ở các domain handler, không sửa logic bên trong.
+  An toàn vì Giai đoạn 9 chỉ cho thay bản cũ khi TOÀN BỘ roadmap (kể cả
+  Giai đoạn 6 có gate) đã pass hết - `resolveDanhBoRef` tạm không bao giờ
+  chạm khách hàng thật.
+
+  Nhánh riêng: `giai-doan-5b-domain-handlers` (tách từ
+  `giai-doan-5a-tool-call` ngày 23/08/2026, cùng lý do như 5a: dễ theo
+  dõi tiến độ và rollback/tái sử dụng riêng nếu cần).
+
 - [x] **Giai đoạn 5a - "Bước 0": quan sát event tool-call thật trước khi
   làm domain layer.** (Bổ sung 22/08/2026, phát hiện qua câu hỏi của
   người dùng khi review roadmap: "domain làm ở Giai đoạn 5 có hợp lý
