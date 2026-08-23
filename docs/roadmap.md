@@ -396,6 +396,72 @@ cho cả lộ trình này:
   đoạn 5 (`billing.js`/`outages.js`/`tickets.js`/`call-control.js`/
   `procedures.js`/`tool-router.js`, dùng `resolveDanhBoRef` tạm).
 
+- [x] **Giai đoạn 5b - Domain handlers còn lại + tool-router.js.** (Đóng
+  23/08/2026, nhánh `giai-doan-5b-domain-handlers`.) Port đủ 5 file domain
+  còn lại của Giai đoạn 5 + nối dây thành 1 `handlers` map dùng chung.
+
+  - `src/domain/resolve-danh-bo-ref.js` - stub tạm TIN THẲNG giá trị model
+    gửi (không xác thực/gate), CÙNG hợp đồng `{ok:true,value}`/
+    `{ok:false,error}` với `resolveDanhBo` thật (Giai đoạn 6) - khác 1 điểm
+    so với kế hoạch ban đầu: `error` là OBJECT (không phải chuỗi JSON đã
+    stringify như bản cũ) để khớp quy ước chung của kiến trúc mới (domain
+    handler trả object thường, `dispatch-tool-call.js` là nơi DUY NHẤT gọi
+    `JSON.stringify()`).
+  - `src/domain/billing.js` (từ `fetchBilling`/`handleGetBill`/
+    `handleCompareUsage` + `docTienVN`/`fmtNgay`/`simplifyRow`/
+    `prevPeriod`) - giữ nguyên quirk backend thật (không truyền ky/nam mà
+    *_NOT_FOUND → tự lùi 1 kỳ, gọi lại đúng 1 lần). **Gọi thật tới API Tổng
+    đài CNTA qua tunnel (mã danh bộ `22023251775`, chủ dự án tự chạy lệnh)
+    phát hiện 1 lỗi thật**: `NgayThanhToan` API trả `"DD/MM/YYYY HH:MM:SS"`,
+    không phải ISO `"YYYY-MM-DD..."` như comment/giả định kế thừa từ bản cũ
+    - `fmtNgay` sửa lại nhận cả 2 định dạng, có test dùng đúng dữ liệu thật
+      làm fixture.
+  - `src/domain/outages.js` (`handleGetOutages`) - xác nhận qua
+    `getThongBaoCupNuoc` thật, không lệch gì với giả định.
+  - `src/domain/tickets.js` (`handleCreateTicket`) - xác nhận qua `baoSuCo`
+    thật (chủ dự án tự tạo 1 phiếu test thật, nội dung đánh dấu rõ
+    "[TEST KY THUAT]" để phân biệt sự cố thật) - không lệch, `data` API trả
+    về là mảng (khác billing.js) nhưng handler không đụng vào cấu trúc bên
+    trong nên không ảnh hưởng.
+  - `src/domain/call-control.js` (`handleTransferToAgent`/
+    `handleLeaveCallbackMessage`/`handleEndCall`/`handleWaitForUser`) -
+    xác nhận `getAvailableAgents` thật, không lệch. **Tự phát hiện qua lúc
+    viết test** (không phải từ ban cũ): `Promise.race` chờ timeout không
+    tự huỷ nhánh THUA - mỗi lần gọi `transfer_to_agent` để lại 1 timer
+    "treo" ~4.5s vô ích, đã sửa bằng `clearTimeout` trong `finally`.
+  - `src/domain/procedures.js` + `procedures-data.js` (từ
+    `normalizeProcedureArgs`/`handleGetProcedureInfo`/
+    `handleCheckMissingDocs`/`toSpoken`/`docMatches` + dữ liệu 4 thủ tục) -
+    file domain LỚN NHẤT, giữ nguyên toàn bộ các tầng heuristic chuẩn hoá
+    tham số (mỗi tầng từng sửa 1 lỗi thật của model, có ghi ngày tháng cụ
+    thể trong code cũ) và gate xác nhận đối tượng theo `callState`
+    (`daHoiDoiTuong`) - không gọi API mạng nên không cần xác nhận dữ liệu
+    thật, chỉ unit test trên chính dữ liệu `PROCEDURES` thật.
+  - `src/domain/tool-router.js` - gộp cả 5 module trên thành 1
+    `handlers` map đúng 10 tên tool (xác nhận từ `system-prompt.js#TOOLS`,
+    không đoán). **Giải quyết 1 trong 2 khoảng cách kiến trúc đã ghi nhận
+    khi viết từng file domain**: `callState` được closure theo TỪNG CUỘC
+    GỌI (`createToolRouter({..., callState})`, giống cách
+    `createTurnController(ws)` đã làm) - mọi hàm trong `handlers` chỉ còn
+    đúng 1 tham số `(args) => output`, khớp đúng ý `dispatch-tool-call.js`
+    đang cần, KHÔNG phải sửa gì ở Giai đoạn 5a. Có test xác nhận trực tiếp
+    `callState` (gate `daHoiDoiTuong` của procedures.js) được giữ xuyên
+    suốt qua NHIỀU lần gọi tool khác nhau trong cùng 1 router.
+
+  Tổng test: 169/169 pass (`node --test`, từ 118 lên 169 qua Giai đoạn 5b).
+
+  **Khoảng cách kiến trúc đã ghi nhận ở đây - ĐÃ SỬA (bổ sung 23/08/2026).**
+  `dispatch-tool-call.js` (`waitingForResponseEnded` đổi từ `Set` sang `Map`
+  để nhớ lại được cả output của tool, không chỉ responseId) nay đọc output
+  tool để quyết định cách gọi `say()`: có `action:"no_reply"` (hiện tại chỉ
+  `wait_for_user` trả) → KHÔNG gọi `say()`, để model thật sự im lặng; có
+  `doc_cho_khach` (call-control.js/procedures.js) → `say({mode:"verbatim",
+  text: doc_cho_khach})` thay vì mode "auto", tránh model tự tóm tắt/diễn
+  đạt lại làm rơi chi tiết bắt buộc. Không có cả 2 field → giữ hành vi cũ.
+  5 test mới, tổng 174/174 pass. Còn lại CHƯA xử lý, cố ý để nguyên:
+  `action:"end_call"`/`"transfer_to_agent"` - cần gọi API thật để cúp/
+  chuyển máy (SIP thật), chờ Giai đoạn 8.
+
 - [ ] **Giai đoạn 6a - Phương án A: code/VAD gom transcript (danh bộ).**
   (Quyết định 21/08/2026: tách Giai đoạn 6 cũ thành 6a/6b làm TUẦN TỰ,
   đúng nguyên tắc "viết ít nhất có thể, tự kiểm chứng trước khi qua giai
