@@ -36,6 +36,13 @@
 // ended cua CHINH response chua tool-call do. Luc nay turn-controller.js
 // da tu don activeResponseId ve rong (qua handleSignal cua no), nen
 // say() se khong con thay responseInFlight nua - khong gui cancel thua.
+//
+// [fix 23/08/2026] Log cu chi in ra "da gui function_call_output" ma
+// KHONG in noi dung tool tra ve gi - doc lai log/diagram khong biet duoc
+// get_bill/... thuc su tra ve so tien bao nhieu. Them 1 dong log("info")
+// ngay sau khi runTool() xong, in ca ten tool + callId + KET QUA day du -
+// checkpoint script van dang tee() moi dong log() nay vao file nhu cu,
+// khong can sua checkpoint script.
 export function createToolDispatcher({ send, turnController, log = () => {}, handlers = {} } = {}) {
   // responseId dang "no" 1 lan goi say(), cho toi khi thay dung response-
   // ended cua no - xem ghi chu tren dau file.
@@ -78,6 +85,7 @@ export function createToolDispatcher({ send, turnController, log = () => {}, han
     if (signal.kind === "tool-call-requested") {
       const { callId, name, arguments: rawArgs, responseId } = signal;
       const output = await runTool(name, rawArgs);
+      log("info", `dispatch-tool-call: tool "${name}" (callId=${callId}) tra ve: ${JSON.stringify(output)}`);
 
       send({
         type: "conversation.item.create",

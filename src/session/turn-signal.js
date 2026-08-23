@@ -18,6 +18,19 @@
 //     biet 1 luot noi co bi VAD tach thanh nhieu manh hay khong)
 //   - conversation.item.input_audio_transcription.completed
 //   - response.created / response.done (status: completed | cancelled)
+//   - response.output_audio_transcript.done (Giai doan 5a, 23/08/2026 -
+//     bo sung sau khi phat hien qua thao luan: lời AI noi KHONG he duoc
+//     chuan hoa, trong khi loi NGUOI DUNG noi (transcript-ready ben duoi)
+//     thi co - lech doi xung khong co ly do. Xac nhan bang du lieu THAT
+//     (khong doan), copy nguyen tu logs/probe-tool-call-1787384731754.jsonl:
+//     {"type":"response.output_audio_transcript.done","response_id":
+//     "resp_EFahxMiakpgtNmPzvHapH","item_id":"item_EFahxiJmGpoiZKLMgS7BC",
+//     "output_index":0,"content_index":0,"transcript":"Ok, để tôi xem thử
+//     hóa đơn tháng này cho bạn nhé."} - dung field `transcript` day du cau,
+//     KHONG can rap tu cac manh .delta (giong cach transcript-ready duoi
+//     day chi dung .completed, khong dung .delta cua nguoi dung). CHỈ chuan
+//     hoa .done - .delta (tung chu mot) VAN CO CHU DICH roi vao ignored,
+//     giong nguyen tac da ap dung cho input_audio_transcription.delta.
 //   - response.function_call_arguments.done (Giai doan 5a, 22/08/2026 -
 //     xem scripts/probe-tool-call.mjs va docs/roadmap.md) - model xin goi
 //     tool. Quan sat that xac nhan tool-call KHONG phai 1 lifecycle rieng:
@@ -35,9 +48,11 @@
 // crash, chi bao hieu "chua xu ly", de call-flow tu quyet dinh co bo qua
 // that hay khong. Cac event khac lien quan tool-call quan sat duoc o Giai
 // doan 5a (response.output_item.added/done, response.function_call_
-// arguments.delta, response.output_audio*, response.content_part.*,
-// conversation.item.added/done, rate_limits.updated) CO CHU DICH roi vao
-// "ignored" - chua co nhu cau dung toi, khong phai bo sot.
+// arguments.delta, response.output_audio.*, response.output_audio_
+// transcript.delta [chi .delta - .done da chuan hoa thanh ai-said o tren],
+// response.content_part.*, conversation.item.added/done, rate_limits.
+// updated) CO CHU DICH roi vao "ignored" - chua co nhu cau dung toi,
+// khong phai bo sot.
 
 export function normalizeTurnEvent(rawEvent) {
   if (!rawEvent || typeof rawEvent.type !== "string") {
@@ -79,6 +94,14 @@ export function normalizeTurnEvent(rawEvent) {
         kind: "response-ended",
         responseId: rawEvent.response?.id ?? null,
         status: rawEvent.response?.status ?? "unknown",
+      };
+
+    case "response.output_audio_transcript.done":
+      return {
+        kind: "ai-said",
+        responseId: rawEvent.response_id ?? null,
+        itemId: rawEvent.item_id ?? null,
+        text: rawEvent.transcript ?? "",
       };
 
     case "response.function_call_arguments.done":

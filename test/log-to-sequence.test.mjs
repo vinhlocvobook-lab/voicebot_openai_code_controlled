@@ -120,6 +120,33 @@ test("parseCheckpointLog: log rong -> mang rong, khong throw", () => {
   assert.deepEqual(parseCheckpointLog(""), []);
 });
 
+test("[23/08/2026] tin hieu ai-said (loi AI noi) duoc rut gon thanh 1 note co noi dung that, khong phai ignored", () => {
+  const log = [
+    "[+    30ms] <- response.output_audio_transcript.done",
+    '[checkpoint-test] tin hieu chuan hoa: {"kind":"ai-said","responseId":"resp_1","itemId":"item_1","text":"Ok, để tôi xem thử hóa đơn tháng này cho bạn nhé."}',
+  ].join("\n");
+
+  const events = parseCheckpointLog(log);
+  const note = events.find((e) => e.type === "note" && e.text.includes("ai-said"));
+
+  assert.ok(note, "phai co note ai-said");
+  assert.match(note.text, /Ok, để tôi xem thử hóa đơn tháng này cho bạn nhé\./, "phai thay noi dung AI noi that, khong phai chi ten kind");
+});
+
+test("[fix 23/08/2026] tin hieu transcript-ready (loi nguoi dung noi) in ra dung noi dung - truoc day doc sai field nen luon ra 'undefined'", () => {
+  const log = [
+    "[+    10ms] <- conversation.item.input_audio_transcription.completed",
+    '[checkpoint-test] tin hieu chuan hoa: {"kind":"transcript-ready","itemId":"item_1","text":"Cho tôi hỏi hóa đơn tháng này."}',
+  ].join("\n");
+
+  const events = parseCheckpointLog(log);
+  const note = events.find((e) => e.type === "note" && e.text.includes("transcript-ready"));
+
+  assert.ok(note, "phai co note transcript-ready");
+  assert.match(note.text, /Cho tôi hỏi hóa đơn tháng này\./, "phai thay noi dung that");
+  assert.doesNotMatch(note.text, /undefined/, "BUG cu: doc nham signal.transcript (khong ton tai) thay vi signal.text");
+});
+
 test("toMermaid: note dai duoc chen <br/> de tu xuong dong, khong bi Mermaid cat ngang o canh khung hinh", () => {
   const longText =
     "tín hiệu: tool-call-requested (name=get_bill, callId=call_WEx4pI3LvcFRdQjW, " +

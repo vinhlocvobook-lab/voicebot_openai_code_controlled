@@ -58,7 +58,14 @@ function summarizeSignal(signal) {
     case "buffer-committed":
       return `tín hiệu: buffer-committed (itemId=${signal.itemId})`;
     case "transcript-ready":
-      return `tín hiệu: transcript-ready ("${truncate(signal.transcript ?? "", 80)}")`;
+      // [fix 23/08/2026] BUG cu: doc signal.transcript, nhung turn-signal.js
+      // dat ten field la `text` (xem normalizeTurnEvent) - truoc gio dong
+      // nay luon in ra "undefined" tren moi diagram, khong bi phat hien vi
+      // SAMPLE_LOG cua test chua tung co dong transcript-ready nao (them
+      // test kiem tra rieng, xem log-to-sequence.test.mjs).
+      return `tín hiệu: transcript-ready ("${truncate(signal.text ?? "", 80)}")`;
+    case "ai-said":
+      return `tín hiệu: ai-said ("${truncate(signal.text ?? "", 80)}")`;
     case "error":
       return `tín hiệu: error (${truncate(JSON.stringify(signal.raw ?? signal), 150)})`;
     default:

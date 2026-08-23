@@ -21,12 +21,14 @@ import { createToolDispatcher } from "../src/call-flow/dispatch-tool-call.js";
 function makeFakes(handlers) {
   const sent = [];
   const sayCalls = [];
+  const logCalls = [];
   const dispatcher = createToolDispatcher({
     send: (obj) => sent.push(obj),
     turnController: { say: (opts) => sayCalls.push(opts) },
+    log: (level, msg) => logCalls.push({ level, msg }),
     handlers,
   });
-  return { dispatcher, sent, sayCalls };
+  return { dispatcher, sent, sayCalls, logCalls };
 }
 
 test("tool co handler, arguments hop le -> goi dung handler, gui function_call_output dung call_id, CHUA say() ngay, chi say() sau khi response ket thuc", async () => {
@@ -216,6 +218,27 @@ test("[Giai doan 5a] dung DUNG tin hieu that (copy tu logs/probe-tool-call-17873
   // logs/probe-tool-call-1787384731754.jsonl, response.status:"completed").
   await dispatcher.handleSignal({ kind: "response-ended", responseId: "resp_EFahxMiakpgtNmPzvHapH", status: "completed" });
   assert.equal(sayCalls.length, 1);
+});
+
+test("[fix 23/08/2026] runTool() tra ve gi duoc log('info') day du - khong con chi thay dong 'da gui function_call_output' trong khong biet tool tra ve so tien bao nhieu", async () => {
+  const { dispatcher, logCalls } = makeFakes({
+    get_bill: async (args) => ({ success: true, data: [{ ma_danh_bo: args.ma_danh_bo, tong_tien: 185000 }] }),
+  });
+
+  await dispatcher.handleSignal({
+    kind: "tool-call-requested",
+    responseId: "resp_9",
+    callId: "call_9",
+    name: "get_bill",
+    arguments: '{"ma_danh_bo":"22082351775"}',
+  });
+
+  const outputLog = logCalls.find((c) => c.msg.includes("tra ve"));
+  assert.ok(outputLog, "phai co 1 dong log ghi lai ket qua tool tra ve");
+  assert.equal(outputLog.level, "info");
+  assert.match(outputLog.msg, /get_bill/);
+  assert.match(outputLog.msg, /call_9/);
+  assert.match(outputLog.msg, /185000/, "phai thay duoc so tien that trong log, khong chi bao 'da gui'");
 });
 
 test("runTool() dung doc lap (khong can send/turnController gia) - tien ich khi debug rieng 1 tool", async () => {
