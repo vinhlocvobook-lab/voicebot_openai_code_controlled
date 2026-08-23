@@ -43,6 +43,20 @@
 // ngay sau khi runTool() xong, in ca ten tool + callId + KET QUA day du -
 // checkpoint script van dang tee() moi dong log() nay vao file nhu cu,
 // khong can sua checkpoint script.
+//
+// [bo sung 23/08/2026, theo yeu cau chu du an] Them 2 dong log nua, tach
+// rieng 3 moc quan sat doc lap (moi moc co the sai theo 1 cach khac nhau,
+// nen KHONG gop lam 1 dong):
+//   1. INPUT nhan duoc (truoc khi goi handler) - dung rawArgs nguyen van
+//      (chuoi JSON tho model gui, GIONG HET field `arguments` cua tin
+//      hieu tool-call-requested - xem turn-signal.js) de doi chieu duoc
+//      voi dong tool-call-requested da co tren diagram.
+//   2. OUTPUT handler tra ve (da co tu ban fix truoc, giu nguyen).
+//   3. Payload THAT gui len OpenAI (item conversation.item.create day du,
+//      khong chi ten event) - khac voi #2 o cho day la dang DA DUOC BOC
+//      (call_id + JSON.stringify(output) lam string long trong `item`),
+//      neu co loi boc sai (vd nham call_id, JSON.stringify hong) se thay
+//      o day ma khong thay o #2.
 export function createToolDispatcher({ send, turnController, log = () => {}, handlers = {} } = {}) {
   // responseId dang "no" 1 lan goi say(), cho toi khi thay dung response-
   // ended cua no - xem ghi chu tren dau file.
@@ -84,13 +98,17 @@ export function createToolDispatcher({ send, turnController, log = () => {}, han
 
     if (signal.kind === "tool-call-requested") {
       const { callId, name, arguments: rawArgs, responseId } = signal;
+      log("info", `dispatch-tool-call: goi tool "${name}" (callId=${callId}) voi input: ${rawArgs}`);
+
       const output = await runTool(name, rawArgs);
       log("info", `dispatch-tool-call: tool "${name}" (callId=${callId}) tra ve: ${JSON.stringify(output)}`);
 
-      send({
+      const outgoingItem = {
         type: "conversation.item.create",
         item: { type: "function_call_output", call_id: callId, output: JSON.stringify(output) },
-      });
+      };
+      log("info", `dispatch-tool-call: gui len OpenAI: ${JSON.stringify(outgoingItem)}`);
+      send(outgoingItem);
 
       if (responseId) {
         waitingForResponseEnded.add(responseId);

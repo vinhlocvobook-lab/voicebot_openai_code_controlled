@@ -172,3 +172,25 @@ test("handleSignal bo qua an toan cac kind khong lien quan (khong crash)", () =>
   tc.handleSignal({});
   assert.equal(tc.isResponseActive(), false);
 });
+
+test("[bo sung 23/08/2026] say() log('info') dung input (opts) nhan duoc, KE CA khi sau do nem loi vi thieu tham so", () => {
+  const ws = createMockWs();
+  const logCalls = [];
+  const tc = createTurnController(ws, { log: (level, msg) => logCalls.push({ level, msg }) });
+
+  tc.say({ mode: "verbatim", text: "Da xac nhan ma danh bo la 22082351775" });
+
+  const inputLog = logCalls.find((c) => c.msg.includes("say() duoc goi voi input"));
+  assert.ok(inputLog, "phai co 1 dong log ghi lai input cua say()");
+  assert.equal(inputLog.level, "info");
+  assert.match(inputLog.msg, /verbatim/);
+  assert.match(inputLog.msg, /22082351775/);
+
+  // Van phai log DUOC input ngay ca khi say() SAU DO nem loi (thieu tham
+  // so bat buoc) - log dat truoc buildResponsePayload() nen khong bi anh
+  // huong boi loi validate phia sau.
+  logCalls.length = 0;
+  assert.throws(() => tc.say({ mode: "guided" }), /instructions/);
+  assert.equal(logCalls.length, 1, "van phai log duoc input du sau do nem loi");
+  assert.match(logCalls[0].msg, /guided/);
+});

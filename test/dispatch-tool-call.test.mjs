@@ -233,12 +233,64 @@ test("[fix 23/08/2026] runTool() tra ve gi duoc log('info') day du - khong con c
     arguments: '{"ma_danh_bo":"22082351775"}',
   });
 
-  const outputLog = logCalls.find((c) => c.msg.includes("tra ve"));
+  const outputLog = logCalls.find((c) => c.msg.includes("tra ve") && !c.msg.includes("gui len OpenAI"));
   assert.ok(outputLog, "phai co 1 dong log ghi lai ket qua tool tra ve");
   assert.equal(outputLog.level, "info");
   assert.match(outputLog.msg, /get_bill/);
   assert.match(outputLog.msg, /call_9/);
   assert.match(outputLog.msg, /185000/, "phai thay duoc so tien that trong log, khong chi bao 'da gui'");
+});
+
+test("[bo sung 23/08/2026] input goi tool duoc log('info') NGAY khi tin hieu tool-call-requested toi, truoc ca khi handler chay xong", async () => {
+  const { dispatcher, logCalls } = makeFakes({
+    get_bill: async (args) => ({ success: true, data: [{ ma_danh_bo: args.ma_danh_bo }] }),
+  });
+
+  await dispatcher.handleSignal({
+    kind: "tool-call-requested",
+    responseId: "resp_10",
+    callId: "call_10",
+    name: "get_bill",
+    arguments: '{"ma_danh_bo":"22082351775","ky":8}',
+  });
+
+  const inputLog = logCalls.find((c) => c.msg.includes("voi input"));
+  assert.ok(inputLog, "phai co 1 dong log ghi lai input nhan duoc");
+  assert.equal(inputLog.level, "info");
+  assert.match(inputLog.msg, /get_bill/);
+  assert.match(inputLog.msg, /call_10/);
+  assert.match(inputLog.msg, /22082351775/, "phai thay duoc chinh xac arguments tho model gui, khong phai ban da xu ly");
+
+  // Input phai duoc log TRUOC output trong thu tu logCalls - dung dung
+  // trinh tu thuc te (log input roi moi goi handler).
+  const inputIdx = logCalls.findIndex((c) => c.msg.includes("voi input"));
+  const outputIdx = logCalls.findIndex((c) => c.msg.includes("tra ve") && !c.msg.includes("gui len OpenAI"));
+  assert.ok(inputIdx < outputIdx, "input phai duoc log truoc output, dung thu tu thuc thi");
+});
+
+test("[bo sung 23/08/2026] payload THAT gui len OpenAI (conversation.item.create) duoc log('info') day du, khac voi log ket qua tool tra ve", async () => {
+  const { dispatcher, sent, logCalls } = makeFakes({
+    get_bill: async () => ({ success: true, data: [{ tong_tien: 185000 }] }),
+  });
+
+  await dispatcher.handleSignal({
+    kind: "tool-call-requested",
+    responseId: "resp_11",
+    callId: "call_11",
+    name: "get_bill",
+    arguments: "{}",
+  });
+
+  const wireLog = logCalls.find((c) => c.msg.includes("gui len OpenAI"));
+  assert.ok(wireLog, "phai co 1 dong log rieng ghi lai payload that gui len OpenAI");
+  assert.equal(wireLog.level, "info");
+
+  // Dong log nay phai KHOP CHINH XAC voi nhung gi send() thuc su nhan -
+  // khong phai 1 ban dien giai rieng, tranh lech giua "noi se gui" va
+  // "that su gui" (chinh loai loi ma dong log nay sinh ra de bat).
+  const loggedPayload = JSON.parse(wireLog.msg.replace("dispatch-tool-call: gui len OpenAI: ", ""));
+  assert.deepEqual(loggedPayload, sent[0]);
+  assert.equal(loggedPayload.item.call_id, "call_11");
 });
 
 test("runTool() dung doc lap (khong can send/turnController gia) - tien ich khi debug rieng 1 tool", async () => {

@@ -116,6 +116,16 @@ let sawError = false;
 let sentText = false;
 let finished = false;
 
+// [bo sung 23/08/2026] Truoc day chi doi 2 response ket thuc (response 1 -
+// xin goi tool, response 2 - doc ket qua) roi dong ket noi ngay - nghia la
+// KHONG BAO GIO thay say() (hoan lai sau response-ended cua response 2)
+// thuc su tao ra VA HOAN TAT 1 response thu 3 hay khong, chi thay dong
+// "-> response.create" duoc gui di (bang chung say() DA CHAY, nhung chua
+// chung minh no THANH CONG). Nang len 3 de moi lan chay deu tu xac nhan
+// het vong doi, khong con phai doan/hoi "khi nao no phat" nua - va KHONG
+// can cho toi khi noi that (SIP) moi kiem chung duoc dieu nay.
+const RESPONSES_ENDED_FOR_PASS = 3;
+
 function send(obj) {
   ws.send(JSON.stringify(obj));
   log("out", obj);
@@ -232,10 +242,12 @@ ws.on("close", (code, reason) => {
 function maybeFinish() {
   const endedCount = [...responses.values()].filter((r) => r.ended).length;
   // PASS khi: da thay tool-call, da gui xong function_call_output, VA it
-  // nhat 2 response rieng biet da ket thuc (response 1 - xin goi tool,
-  // response 2 - doc ket qua) - khong doan truoc thu tu chinh xac, chi
-  // doan trang thai CUOI CUNG can dat duoc.
-  if (toolCallInfo && functionOutputSent && endedCount >= 2) {
+  // nhat RESPONSES_ENDED_FOR_PASS response rieng biet da ket thuc (1 - xin
+  // goi tool, 2 - doc ket qua, 3 - say() hoan lai da tao VA HOAN TAT sau
+  // khi thay response-ended cua response 2, xem ghi chu tren dau bien) -
+  // khong doan truoc thu tu chinh xac, chi doan trang thai CUOI CUNG can
+  // dat duoc.
+  if (toolCallInfo && functionOutputSent && endedCount >= RESPONSES_ENDED_FOR_PASS) {
     finish(sawError ? 1 : 0);
   }
 }
@@ -254,8 +266,12 @@ function finish(exitCode) {
     tee(`[checkpoint-5a] co event error: ${sawError}`);
     tee(`[checkpoint-5a] isResponseActive() cuoi cung: ${turnController.isResponseActive()}`);
     tee(`[checkpoint-5a] Log: ${txtPath}`);
-    const ok = !!toolCallInfo && functionOutputSent && !sawError && [...responses.values()].filter((r) => r.ended).length >= 2;
-    tee(`[checkpoint-5a] KET QUA: ${ok ? "PASS - vong doi tool-call chay tron ven qua day that" : "CAN XEM LAI"}`);
+    const ok =
+      !!toolCallInfo &&
+      functionOutputSent &&
+      !sawError &&
+      [...responses.values()].filter((r) => r.ended).length >= RESPONSES_ENDED_FOR_PASS;
+    tee(`[checkpoint-5a] KET QUA: ${ok ? "PASS - vong doi tool-call chay tron ven qua day that, KE CA say() hoan lai da hoan tat" : "CAN XEM LAI"}`);
     ws.close();
     txtStream.end(() => {
       process.exit(ok ? 0 : (exitCode || 1));
@@ -263,14 +279,16 @@ function finish(exitCode) {
   }, 500);
 }
 
-// An toan: neu khong ket thuc trong 20s (vd model khong goi tool lan nay,
-// hoac ket noi treo) - tu dong dong, khong de script chay mai.
+// An toan: neu khong ket thuc trong 25s (vd model khong goi tool lan nay,
+// hoac ket noi treo) - tu dong dong, khong de script chay mai. [nang tu
+// 20s -> 25s ngay 23/08/2026 cung luc voi RESPONSES_ENDED_FOR_PASS: 2->3 -
+// gio phai cho them 1 response nua hoan tat nen can them chut du dia.]
 setTimeout(() => {
   if (!finished) {
-    tee("[checkpoint-5a] TIMEOUT 20s - chua thay du dieu kien PASS, xem log de biet dung o buoc nao.");
+    tee("[checkpoint-5a] TIMEOUT 25s - chua thay du dieu kien PASS, xem log de biet dung o buoc nao.");
     finish(1);
   }
-}, 20000);
+}, 25000);
 
 process.on("SIGINT", () => {
   console.log("\n[checkpoint-5a] Ngat boi nguoi dung (Ctrl+C).");

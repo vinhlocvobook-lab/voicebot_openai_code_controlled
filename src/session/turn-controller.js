@@ -95,7 +95,17 @@ export function createTurnController(ws, options = {}) {
 
   // API duy nhat de yeu cau bot noi. Tra ve so generation cua yeu cau nay
   // (chu goi co the giu lai de doi chieu sau, khong bat buoc dung).
+  //
+  // [bo sung 23/08/2026, theo yeu cau chu du an] Log INPUT (opts) nhan
+  // duoc NGAY dong dau ham, TRUOC buildResponsePayload() - de con thay
+  // duoc opts ngay ca khi validate that bai (nem loi vi thieu tham so bat
+  // buoc theo mode). Dat o DAY (khong phai o tung noi GOI say() nhu
+  // dispatch-tool-call.js) vi day la noi DUY NHAT duoc phep goi response.
+  // create - moi noi goi say() (dispatch-tool-call.js, checkpoint script,
+  // sau nay call-flow/*) deu tu dong duoc log, khong can nho them tung cho.
   function say(opts = {}) {
+    log("info", `turn-controller: say() duoc goi voi input: ${JSON.stringify(opts)}`);
+
     // Validate + dung payload TRUOC - neu loi, khong dung gi den state.
     const responsePayload = buildResponsePayload(opts);
 
