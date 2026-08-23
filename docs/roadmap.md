@@ -462,6 +462,47 @@ cho cả lộ trình này:
   `action:"end_call"`/`"transfer_to_agent"` - cần gọi API thật để cúp/
   chuyển máy (SIP thật), chờ Giai đoạn 8.
 
+- [x] **Checkpoint end-to-end Giai đoạn 5b (đóng 23/08/2026).** Nối
+  `tool-router.js` (với 5 hàm THẬT của `tongdai-api.js` tiêm vào, không
+  còn hàm giả lập) vào 1 cuộc gọi Realtime thật, qua `dispatch-tool-call.js`
+  + `session/turn-controller.js` - lần đầu tiên toàn bộ dây chuyền domain
+  handler chạy trong 1 cuộc gọi thật, không chỉ unit test với fake. 3 file
+  mới: `scripts/gen-sample-5b.mjs` (tạo mẫu audio bằng TTS thật, đọc mã
+  danh bộ `22023251775` tách từng chữ số), `scripts/checkpoint-giai-doan-
+  5b.mjs` (bản text) và `-audio.mjs` (bản audio) - cả 2 dùng `GET_BILL_TOOL`
+  nguyên văn từ `system-prompt.js`, có "spy" quanh `get_bill`/`turnController.say`
+  để đối chiếu ĐÚNG dữ liệu thật + đúng nhánh `say()`, không chỉ xác nhận
+  giao thức chạy trọn như checkpoint 5a.
+
+  **Phát hiện + sửa 1 lỗi thật ở `dispatch-tool-call.js` (fix 23/08/2026 #2)**,
+  chỉ lộ ra khi dùng API thật (độ trễ mạng thật, không phải hàm giả lập gần
+  tức thời): `waitingForResponseEnded` (fix #1) ghi `responseId -> output`
+  SAU khi `await handler()` xong - nhưng dữ liệu thật cho thấy
+  `response.done` của OpenAI về gần như ngay sau khi model phát xong lệnh
+  gọi hàm (~6ms), KHÔNG đợi tool chạy xong (2483ms với API thật) - `response-
+  ended` đến và bị bỏ qua (map còn rỗng) TRƯỚC khi entry được tạo, `say()`
+  không bao giờ được gọi, cuộc gọi treo tới timeout. Sửa: tách trạng thái
+  theo `responseId` thành `{ended, hasOutput, output}`, đăng ký entry NGAY
+  (trước `await`) - `say()` luôn chạy đúng 1 lần bất kể `response-ended`
+  tới trước hay sau khi tool xong. 2 test mới dùng Promise treo (resolve
+  bằng tay) mô phỏng đúng thứ tự thật, tổng 176/176 pass.
+
+  Cũng phát hiện tiêu chí PASS của chính checkpoint (kế thừa từ bản 5a) sai:
+  `RESPONSES_ENDED_FOR_PASS=3` nhưng dữ liệu thật cho thấy 1 vòng tool-call
+  bình thường chỉ có ĐÚNG 2 response (response 1: hỏi + gọi tool, kết thúc
+  ngay không đợi tool; response 2: `say()` tạo ra để đọc kết quả) - không
+  có response thứ 3 nào. Sửa về 2 (lỗi ở tiêu chí checkpoint, không phải lỗi
+  code).
+
+  **Kết quả cuối**: bản text **PASS** hoàn toàn - dữ liệu hoá đơn là dữ
+  liệu THẬT (mã danh bộ `22023251775`: kỳ 8/2026, 428.413đ, đã thanh toán
+  22/08/2026), `say()` đúng nhánh mode "auto". Bản audio: vòng đời tool-call
+  + `say()` đúng (2/2 response kết thúc, `say()` đúng mode auto) nhưng vẫn
+  báo `CUSTOMER_NOT_FOUND` - KHÔNG phải lỗi code: STT phiên đúng "2202 325
+  1775" (khớp `22023251775`), nhưng model khi điền `ma_danh_bo` đánh rơi 1
+  chữ số, ghi thành `"2203251775"` (10 số). Đây là vấn đề thu thập/xác nhận
+  danh bộ qua giọng nói, để lại CHO Giai đoạn 6a/6b xử lý, không sửa ở đây.
+
 - [ ] **Giai đoạn 6a - Phương án A: code/VAD gom transcript (danh bộ).**
   (Quyết định 21/08/2026: tách Giai đoạn 6 cũ thành 6a/6b làm TUẦN TỰ,
   đúng nguyên tắc "viết ít nhất có thể, tự kiểm chứng trước khi qua giai

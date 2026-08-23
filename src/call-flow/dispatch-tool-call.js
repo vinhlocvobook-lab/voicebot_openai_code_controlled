@@ -75,12 +75,49 @@
 // that de cup/chuyen may (SIP that, Giai doan 8 chua toi) nen tam thoi
 // VAN goi say() nhu binh thuong cho 2 action nay (giong nhu khong co
 // action gi ca) - se xu ly khi noi SIP that.
+//
+// [fix 23/08/2026 #2, phat hien BANG checkpoint-giai-doan-5b.mjs/-audio.mjs
+// chay THAT voi tongdai-api.js that (KHONG phai doan)] Ban dau (fix o
+// tren) gia dinh ngam: dispatcher se KIP dang ky waitingForResponseEnded
+// TRUOC khi response-ended cua response do toi - dung voi handler gia lap
+// gan nhu tuc thoi (Giai doan 5a), nhung SAI voi handler that co do tre
+// mang. Du lieu that (logs/checkpoint5b-1787506705312.txt): goi that toi
+// API CNTA mat 2483ms, nhung response.done cua OpenAI cho response chua
+// tool-call ve chi sau ~6ms ke tu luc gui request - OpenAI KHONG doi tool
+// chay xong moi dong response (chi doi model PHAT XONG loi goi ham).
+// Code cu: goi waitingForResponseEnded.set(responseId, output) SAU khi
+// await handler() xong - luc do response-ended cua responseId nay DA toi
+// va DA bi bo qua (Map rong luc do, .has() tra false) TRUOC khi entry
+// duoc tao - "no" bi mat vinh vien, say() khong bao gio duoc goi, cuoc
+// goi treo toi timeout. Du lieu that: CA 2 checkpoint (text lan audio)
+// deu "CAN XEM LAI" vi dung ly do nay, khong lien quan billing.js/
+// tool-router.js (van tra ve dung du lieu that).
+//
+// SUA: tach trang thai theo responseId thanh 1 entry {ended, hasOutput,
+// output} - dang ky entry NGAY khi biet responseId (truoc khi await
+// handler, tuc truoc ca khi co do tre mang nao xay ra), roi:
+//   - response-ended toi TRUOC (entry.ended=true) khi handler CHUA xong:
+//     luc handler xong, thay entry.ended da true -> goi say() NGAY,
+//     khong con gi de cho nua.
+//   - response-ended toi SAU (binh thuong, giong Giai doan 5a): luc
+//     handler xong, entry.ended con false -> luu output vao entry, cho
+//     response-ended toi moi say() (y het hanh vi cu).
+// Bat ke thu tu, say() LUON duoc goi dung 1 lan khi CA HAI dieu kien (tool
+// xong + response ket thuc) da xay ra - khong con phu thuoc ai toi truoc.
 export function createToolDispatcher({ send, turnController, log = () => {}, handlers = {} } = {}) {
-  // responseId dang "no" 1 lan goi say(), cho toi khi thay dung response-
-  // ended cua no - xem ghi chu tren dau file. Map (khong phai Set nua) vi
-  // can nho lai CA output cua tool de quyet dinh cach say() dung luc
-  // response ket thuc (xem sayForOutput duoi day).
-  const waitingForResponseEnded = new Map();
+  // responseId -> { ended, hasOutput, output } - xem ghi chu fix 23/08/2026
+  // #2 tren day. Thay Map "output don gian" cu (khong con du de chiu
+  // duoc thu tu den truoc/sau cua response-ended so voi handler xong).
+  const pending = new Map();
+
+  function getPendingEntry(responseId) {
+    let entry = pending.get(responseId);
+    if (!entry) {
+      entry = { ended: false, hasOutput: false, output: undefined };
+      pending.set(responseId, entry);
+    }
+    return entry;
+  }
 
   // [fix 23/08/2026] Quyet dinh CACH goi say() dua tren output cua tool -
   // dung chung cho ca nhanh binh thuong (cho response-ended) lan nhanh
@@ -137,6 +174,13 @@ export function createToolDispatcher({ send, turnController, log = () => {}, han
       const { callId, name, arguments: rawArgs, responseId } = signal;
       log("info", `dispatch-tool-call: goi tool "${name}" (callId=${callId}) voi input: ${rawArgs}`);
 
+      // [fix 23/08/2026 #2] Dang ky entry NGAY, TRUOC khi await runTool() -
+      // xem ghi chu dau file. Neu response-ended cua CHINH responseId nay
+      // toi trong luc runTool() con dang cho (do tre mang that), entry da
+      // co san de nhanh response-ended (duoi day) danh dau "ended" thay vi
+      // bo qua vinh vien nhu code cu.
+      const entry = responseId ? getPendingEntry(responseId) : null;
+
       const output = await runTool(name, rawArgs);
       log("info", `dispatch-tool-call: tool "${name}" (callId=${callId}) tra ve: ${JSON.stringify(output)}`);
 
@@ -147,12 +191,26 @@ export function createToolDispatcher({ send, turnController, log = () => {}, han
       log("info", `dispatch-tool-call: gui len OpenAI: ${JSON.stringify(outgoingItem)}`);
       send(outgoingItem);
 
-      if (responseId) {
-        waitingForResponseEnded.set(responseId, output);
-        log(
-          "info",
-          `dispatch-tool-call: da gui function_call_output, hoan say() toi khi response ${responseId} ket thuc`,
-        );
+      if (entry) {
+        if (entry.ended) {
+          // response-ended cua response nay DA toi truoc khi tool chay
+          // xong (do tre mang that lon hon khoang cach function_call_
+          // arguments.done -> response.done cua OpenAI) - khong con gi de
+          // cho nua, goi say() NGAY.
+          pending.delete(responseId);
+          log(
+            "info",
+            `dispatch-tool-call: response ${responseId} da ket thuc TRUOC khi tool xong (do tre mang) - goi say() ngay`,
+          );
+          sayForOutput(output);
+        } else {
+          entry.hasOutput = true;
+          entry.output = output;
+          log(
+            "info",
+            `dispatch-tool-call: da gui function_call_output, hoan say() toi khi response ${responseId} ket thuc`,
+          );
+        }
       } else {
         // Phong thu - chua thay xay ra voi du lieu that (turn-signal.js
         // luon dien responseId tu response_id cua event), nhung neu thieu
@@ -164,10 +222,17 @@ export function createToolDispatcher({ send, turnController, log = () => {}, han
       return;
     }
 
-    if (signal.kind === "response-ended" && waitingForResponseEnded.has(signal.responseId)) {
-      const output = waitingForResponseEnded.get(signal.responseId);
-      waitingForResponseEnded.delete(signal.responseId);
-      sayForOutput(output);
+    if (signal.kind === "response-ended") {
+      const entry = pending.get(signal.responseId);
+      if (!entry) return;
+      if (entry.hasOutput) {
+        pending.delete(signal.responseId);
+        sayForOutput(entry.output);
+      } else {
+        // Tool con dang chay (do tre mang that) - danh dau "da ket thuc",
+        // de nhanh tool-call-requested (tren) tu goi say() ngay luc no xong.
+        entry.ended = true;
+      }
     }
   }
 

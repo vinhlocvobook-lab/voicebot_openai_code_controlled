@@ -13,6 +13,13 @@
 // Cac test duoi day vi vay them buoc: goi tool-call-requested -> kiem tra
 // sayCalls VAN CON RONG -> goi response-ended DUNG responseId -> kiem tra
 // sayCalls moi len 1.
+//
+// [fix 23/08/2026 #2] Phat hien BANG checkpoint-giai-doan-5b.mjs/-audio.mjs
+// chay THAT voi tongdai-api.js that: response-ended co the toi TRUOC khi
+// handler that (co do tre mang) chay xong - cac test 5a phia tren deu
+// dung handler gan nhu tuc thoi nen KHONG lo ra truong hop nay. Xem 2 test
+// rieng cuoi file (truoc test runTool doc lap) dung Promise treo (resolve
+// boi tay) de mo phong dung thu tu that.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -361,6 +368,93 @@ test("[fix 23/08/2026] action:no_reply van ap dung dung ca o nhanh phong thu (th
   await dispatcher.handleSignal({ kind: "tool-call-requested", callId: "call_no_resp_id", name: "wait_for_user", arguments: "{}" });
 
   assert.equal(sayCalls.length, 0, "du khong co responseId de cho, action:no_reply van phai chan say()");
+});
+
+// ─── [fix 23/08/2026 #2] race: response-ended toi TRUOC khi handler that ──
+// (co do tre mang) chay xong - phat hien BANG checkpoint-giai-doan-5b.mjs/
+// -audio.mjs chay that voi tongdai-api.js that (xem ghi chu dau src/call-
+// flow/dispatch-tool-call.js). Cac test 5a phia tren deu dung handler gan
+// nhu tuc thoi nen KHONG bao gio lo ra race nay - can handler tra ve
+// Promise CHU DONG treo (resolve boi tay) de mo phong dung thu tu that.
+
+test("[fix 23/08/2026 #2] response-ended CUA CHINH response chua tool-call toi TRUOC khi handler that (co do tre mang) chay xong -> say() van duoc goi dung luc handler xong, khong bi mat vinh vien", async () => {
+  let resolveHandler;
+  const handlerPromise = new Promise((resolve) => {
+    resolveHandler = resolve;
+  });
+  const { dispatcher, sayCalls } = makeFakes({
+    get_bill: async () => {
+      await handlerPromise; // mo phong do tre mang that (vd 2483ms o du lieu that)
+      return { success: true, message: "du lieu that ve sau khi response da dong" };
+    },
+  });
+
+  // KHONG await - handler dang "treo", nhung entry cho responseId nay da
+  // duoc dang ky NGAY (truoc await dau tien ben trong handleSignal, xem
+  // fix 23/08/2026 #2).
+  const toolPromise = dispatcher.handleSignal({
+    kind: "tool-call-requested",
+    responseId: "resp_race",
+    callId: "call_race",
+    name: "get_bill",
+    arguments: "{}",
+  });
+
+  // response-ended cua DUNG response nay toi TRUOC khi handler xong - dung
+  // thu tu da quan sat that (OpenAI dong response ngay sau khi model phat
+  // xong function_call_arguments, KHONG doi tool chay xong).
+  await dispatcher.handleSignal({ kind: "response-ended", responseId: "resp_race", status: "completed" });
+  assert.equal(sayCalls.length, 0, "response-ended toi som nhung handler CHUA xong - chua duoc say() voi output chua san sang");
+
+  // Handler that su xong (do tre mang da qua) - say() PHAI duoc goi ngay
+  // luc nay, KHONG duoc treo mai (day chinh la bug da sua - truoc day
+  // response-ended toi som se bi bo qua vinh vien, cuoc goi treo toi timeout).
+  resolveHandler();
+  await toolPromise;
+  assert.equal(sayCalls.length, 1, "response-ended toi TRUOC handler van phai duoc say() dung luc handler xong");
+});
+
+test("[fix 23/08/2026 #2] 2 response khac nhau, 1 cai response-ended toi som (truoc handler xong) 1 cai toi muon (sau handler xong) - moi cai deu say() dung 1 lan, khong lan sang nhau", async () => {
+  let resolveSlow;
+  const slowPromise = new Promise((resolve) => {
+    resolveSlow = resolve;
+  });
+  const { dispatcher, sayCalls, sent } = makeFakes({
+    get_bill: async ({ ma_danh_bo }) => {
+      if (ma_danh_bo === "cham") await slowPromise;
+      return { success: true, message: `ket qua cho ${ma_danh_bo}` };
+    },
+  });
+
+  // Response "cham" - response-ended toi TRUOC khi handler xong.
+  const slowToolPromise = dispatcher.handleSignal({
+    kind: "tool-call-requested",
+    responseId: "resp_cham",
+    callId: "call_cham",
+    name: "get_bill",
+    arguments: '{"ma_danh_bo":"cham"}',
+  });
+  await dispatcher.handleSignal({ kind: "response-ended", responseId: "resp_cham", status: "completed" });
+  assert.equal(sayCalls.length, 0);
+
+  // Response "nhanh" - thu tu binh thuong, handler xong truoc, response-
+  // ended toi sau (giong het cac test 5a khac).
+  await dispatcher.handleSignal({
+    kind: "tool-call-requested",
+    responseId: "resp_nhanh",
+    callId: "call_nhanh",
+    name: "get_bill",
+    arguments: '{"ma_danh_bo":"nhanh"}',
+  });
+  await dispatcher.handleSignal({ kind: "response-ended", responseId: "resp_nhanh", status: "completed" });
+  assert.equal(sayCalls.length, 1, "response nhanh phai say() dung lich, khong bi anh huong boi response cham dang treo");
+
+  resolveSlow();
+  await slowToolPromise;
+  assert.equal(sayCalls.length, 2, "response cham cuoi cung cung phai say(), dung 1 lan, khong lan them lan nao");
+
+  const outputs = sent.map((s) => JSON.parse(s.item.output).message);
+  assert.deepEqual(outputs.sort(), ["ket qua cho cham", "ket qua cho nhanh"], "output dung khop voi tung response, khong bi tron lan");
 });
 
 test("runTool() dung doc lap (khong can send/turnController gia) - tien ich khi debug rieng 1 tool", async () => {

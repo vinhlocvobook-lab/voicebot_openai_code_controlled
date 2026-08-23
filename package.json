@@ -12,7 +12,10 @@
     "test": "node --test",
     "probe:tool": "node scripts/probe-tool-call.mjs",
     "diagram": "node scripts/log-to-sequence.mjs",
-    "checkpoint:5a-audio": "node scripts/checkpoint-giai-doan-5a-audio.mjs"
+    "checkpoint:5a-audio": "node scripts/checkpoint-giai-doan-5a-audio.mjs",
+    "checkpoint:5b": "node scripts/checkpoint-giai-doan-5b.mjs",
+    "checkpoint:5b-audio": "node scripts/checkpoint-giai-doan-5b-audio.mjs",
+    "gen-sample:5b": "node scripts/gen-sample-5b.mjs"
   },
   "dependencies": {
     "dotenv": "^16.4.5",
