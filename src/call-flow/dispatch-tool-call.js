@@ -131,18 +131,43 @@
 // checkpoint-giai-doan-6a.mjs) tu noi vao onDone cua createDanhBoFlow():
 //     const danhBoFlow = createDanhBoFlow({
 //       ...,
-//       onDone: (result) => {
+//       onDone: async (result) => {
 //         if (result.ok) callState.danhBo = result.danhBo; // CALLER set,
 //           // KHONG PHAI dispatch-tool-call.js - module nay khong nam giu
 //           // callState (chi handlers moi dong qua callState, xem tool-
 //           // router.js), giu dung ranh gioi da co.
+//         await toolDispatcher.handleDanhBoFlowDone(result); // PHAI await
+//           // XONG roi moi setVadMode("normal") - xem "sua 24/08/2026 #3"
+//           // ngay duoi day, ly do la 1 bug THAT phat hien qua checkpoint.
 //         setVadMode("normal"); // CALLER goi - dispatch-tool-call.js
 //           // khong nhan setVadMode lam dependency, tranh phinh to tham so
 //           // factory chi cho 1 nhanh dung 1 lan.
-//         toolDispatcher.handleDanhBoFlowDone(result);
 //       },
 //     });
 //
+// [sua 24/08/2026 #3, PHAT HIEN THAT qua checkpoint-giai-doan-6a.mjs chay
+// that lan 2 - "PASS" nhung log cho thay get_bill bi goi 3 LAN thay vi 2]
+// Ban dau vi du tren viet setVadMode("normal") TRUOC
+// toolDispatcher.handleDanhBoFlowDone(result) (khong await, goi roi bo do).
+// Bug: setVadMode("normal") bat lai create_response:true (VAD server tu
+// dong tra loi) NGAY LAP TUC, trong khi handleDanhBoFlowDone() con dang
+// CHAY BAT DONG BO (await runTool() that toi tongdai-api.js, ~vai giay) -
+// trong khoang cho do, VAD moi bat da co the tu kich hoat response cua
+// CHINH model (khong phai code chu dong), va model dat trong tinh trang
+// "vua nhan duoc function_call_output DANH_BO_MISSING cu, chua co ket qua
+// moi" co the TU DOAN/hallucinate 1 loi goi tool khac (quan sat that: goi
+// get_bill lan 3 voi ma_danh_bo bi doan sai, KHONG khop danh bo that vua
+// xac nhan). May man resolveDanhBoRef() bo qua hoan toan rawArg, chi tin
+// callState.danhBo, nen KHONG co du lieu SAI den tay khach - nhung van la
+// 1 loi that (ton 1 lan goi API thua, rui ro khach nghe 2 cau tra loi
+// chong nhau trong cuoc goi that). Sua: await xong handleDanhBoFlowDone()
+// (dam bao say() verbatim cuoi cung da GUI xong response.create) roi MOI
+// setVadMode("normal") - luc do khong con "cua so ho hong" nao de VAD tu
+// kich hoat response canh tranh nua. turnController.say() ban than no
+// hoat dong duoc BAT KE VAD mode nao (VAD chi kiem soat response TU DONG
+// cua SERVER, khong lien quan goi say() tuong minh) nen doi khong lam mat
+// tac dung cua handleDanhBoFlowDone(), chi tranh khoang ho ma VAD moi bat
+// co the chen ngang.
 // QUYET DINH THIET KE (chuyen gia CSKH + goc nhin khach hang, xem thao
 // luan day du trong hoi thoai voi chu du an 24/08/2026 - KHONG doan, dung
 // lai bang chung/quy tac da co san trong du an):
@@ -383,10 +408,20 @@ export function createToolDispatcher({
     const { name, rawArgs } = pendingCall;
     log("info", `dispatch-tool-call: danh bo da xac nhan - tra cuu lai tool "${name}" voi rawArgs goc: ${rawArgs}`);
 
+    // [sua 24/08/2026 #4, PHAT HIEN THAT qua checkpoint-giai-doan-6a.mjs
+    // chay that lan 3 - xem ghi chu day du trong turn-controller.js#build
+    // ResponsePayload "sua 24/08/2026 #4"] CA 4 say() trong ham nay deu them
+    // toolChoice:"none" - vi CHINH CODE (runTool() ngay duoi day) da tu lam
+    // tron ven viec tra cuu, KHONG luot noi nao o day can/duoc phep de model
+    // TU Y goi them tool nao ca (kem ca chinh get_bill) - bug da quan sat
+    // that: preamble "se tra cuu ngay" (thieu tool_choice:"none") vo tinh bi
+    // model hieu la chi thi HANH DONG, tu bia 1 loi goi get_bill (voi danh
+    // bo doan sai) chay dua voi lan goi TRUC TIEP cua runTool() ben duoi.
+
     // Preamble NGAN truoc khi goi lai (mode "guided", KHONG verbatim - xem
     // giai thich "QUYET DINH THIET KE" dau file) - che do tre mang that
     // (~2483ms da do duoc, xem fix 23/08/2026 #2) truoc khi co ket qua that.
-    turnController.say({ mode: "guided", instructions: RETRY_PREAMBLE_INSTRUCTIONS });
+    turnController.say({ mode: "guided", instructions: RETRY_PREAMBLE_INSTRUCTIONS, toolChoice: "none" });
 
     const output = await runTool(name, rawArgs);
     log("info", `dispatch-tool-call: tra cuu lai "${name}" tra ve: ${JSON.stringify(output)}`);
@@ -396,14 +431,14 @@ export function createToolDispatcher({
       return;
     }
     if (output?.doc_cho_khach) {
-      turnController.say({ mode: "verbatim", text: output.doc_cho_khach });
+      turnController.say({ mode: "verbatim", text: output.doc_cho_khach, toolChoice: "none" });
       return;
     }
     if (output?.message) {
       // Doc DUNG nguyen van output.message (verbatim) - KHONG de model tu
       // dien dat lai, xem "QUYET DINH THIET KE" dau file (docTienVN/so
       // tien/ngay thang da duoc code dinh dang RIENG cho TTS).
-      turnController.say({ mode: "verbatim", text: output.message });
+      turnController.say({ mode: "verbatim", text: output.message, toolChoice: "none" });
       return;
     }
     // Phong thu - ca 4 tool bi chan boi DANH_BO_MISSING (get_bill/
@@ -414,6 +449,7 @@ export function createToolDispatcher({
     turnController.say({
       mode: "guided",
       instructions: `Doc ket qua sau cho khach bang loi tu nhien, day du, khong them thong tin ngoai: ${JSON.stringify(output)}`,
+      toolChoice: "none",
     });
   }
 

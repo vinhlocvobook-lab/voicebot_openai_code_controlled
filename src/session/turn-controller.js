@@ -62,28 +62,79 @@ export function createTurnController(ws, options = {}) {
   //   "verbatim"  - ep doc dung nguyen van 1 cau cho truoc (dung khi CODE
   //                 da tu xac dinh noi dung, vd Giai doan 6a doc lai so
   //                 danh bo de xin xac nhan).
-  //   "tool"      - ep goi dung 1 tool cu the (dung cho luong xac nhan
-  //                 danh bo can 1 function call ro rang).
+  //   "tool"      - dat truc tiep field `tool_choice` cua response.create.
+  //
+  // [sua 24/08/2026, PHAT HIEN THAT qua scripts/checkpoint-giai-doan-6a.mjs
+  // chay that lan dau] Comment cu o day tung ghi "tool" la "ep goi DUNG 1
+  // tool CU THE" (vd toolChoice:"get_bill") - SAI, chua tung duoc xac nhan
+  // bang API that (thiet ke dua theo y tuong ban cu, test cu (turn-
+  // controller.test.mjs) chi dung WS gia nen khong bat duoc loi nay). Du
+  // lieu that: goi toolChoice:"get_bill" bi OpenAI tu choi ngay voi loi
+  // `Invalid value: 'get_bill'. Supported values are: 'auto', 'none', and
+  // 'required'.` (param response.tool_choice) - GPT-realtime-2.x CHI nhan
+  // DUNG 3 gia tri do cho response.tool_choice, KHONG nhan ten ham cu the.
+  // Muon ep goi DUNG 1 tool nao do, cach THAT SU hoat dong (da xac nhan)
+  // la dung "required" KHI CHI co 1 tool duy nhat duoc khai bao trong
+  // session (tools:[...]) - "required" luc do khong con mo ho ten ham nao
+  // de model chon. Ham nay (buildResponsePayload) van CHI la "ong dan"
+  // chuyen tiep toolChoice nguyen van sang tool_choice - khong tu gioi han
+  // gia tri hop le (validate that ve dung/sai gia tri la trach nhiem cua
+  // API, khong phai cua module nay), nen KHONG can sua code o day, chi can
+  // sua comment + noi goi (xem checkpoint-giai-doan-6a.mjs) truyen dung
+  // gia tri.
   // Nem loi ro rang neu thieu tham so bat buoc theo mode - validate
   // TRUOC khi co bat ky side effect nao (chua tang generation, chua gui
   // gi ca) de 1 loi input khong lam hong state hien tai.
+  //
+  // [sua 24/08/2026 #4, PHAT HIEN THAT qua checkpoint-giai-doan-6a.mjs chay
+  // that lan 3 (sau khi da sua #3 o tren - VAD race)] Bug van con: get_bill
+  // van bi goi 3 LAN (khong phai 2) - lan 3 co args BIA (vd
+  // "2,2,2,5,1,1,7,7,5,2", khong khop danh bo that vua xac nhan). Nguyen
+  // nhan LAN NAY KHAC bug #3 (khong con lien quan setVadMode):
+  // dispatch-tool-call.js#handleDanhBoFlowDone() phat 1 cau "preamble"
+  // (mode:"guided", noi dung "...se tra cuu ngay giup khach...") TRUOC khi
+  // CODE tu goi lai tool - day la 1 response.create THAT, va vi
+  // GET_BILL_TOOL van con duoc khai bao suot session (tools:[...] o
+  // session-ws.js khong doi giua cac luot), response.create nay KHONG tu
+  // dong chan model goi tool - tool_choice mac dinh cua session (thuong la
+  // "auto") de model TU DO goi get_bill neu no "hieu" cau "se tra cuu
+  // ngay" nhu 1 chi thi hanh dong, dan toi model TU BIA 1 loi goi tool cua
+  // chinh no, chay SONG SONG (dua) voi lan goi tool TRUC TIEP cua code
+  // (runTool() ngay sau do trong handleDanhBoFlowDone, KHONG di qua
+  // turnController/response.create nen khong bi anh huong tool_choice
+  // nay). Sua: cho phep MOI mode (khong chi rieng "tool") duoc KEM THEM
+  // tool_choice qua tham so toolChoice - dispatch-tool-call.js se dung
+  // toolChoice:"none" cho CA 4 say() trong handleDanhBoFlowDone() (preamble
+  // + 3 nhanh doc ket qua) vi CHINH CODE da tu tra cuu roi, KHONG luot noi
+  // nao trong ham do can/duoc phep de model tu goi them tool nao ca. Ham
+  // nay (buildResponsePayload) van giu nguyen trach nhiem "ong dan" - chi
+  // GHEP THEM field tool_choice neu duoc truyen, khong tu suy doan/ap dat
+  // gia tri mac dinh cho bat ky mode nao (giu tuong thich nguoc hoan toan:
+  // khong truyen toolChoice -> hanh vi y het truoc ban sua nay).
   function buildResponsePayload({ mode = "auto", text, instructions, toolChoice } = {}) {
+    let payload;
     switch (mode) {
       case "auto":
-        return {};
+        payload = {};
+        break;
       case "guided":
         if (!instructions) {
           throw new Error('turn-controller: say({mode:"guided"}) can co "instructions"');
         }
-        return { instructions };
+        payload = { instructions };
+        break;
       case "verbatim":
         if (!text) {
           throw new Error('turn-controller: say({mode:"verbatim"}) can co "text"');
         }
-        return {
+        payload = {
           instructions: `Doc chinh xac nguyen van cau sau, khong them bot mot chu nao: "${text}"`,
         };
+        break;
       case "tool":
+        // Mode "tool" giu NGUYEN hanh vi rieng (chi tool_choice, khong
+        // instructions/text nao khac) - toolChoice o day la BAT BUOC, khac
+        // voi cac mode khac (toolChoice o do la TUY CHON, xem duoi).
         if (!toolChoice) {
           throw new Error('turn-controller: say({mode:"tool"}) can co "toolChoice"');
         }
@@ -91,6 +142,13 @@ export function createTurnController(ws, options = {}) {
       default:
         throw new Error(`turn-controller: mode khong hop le: "${mode}"`);
     }
+    // [sua 24/08/2026 #4] Ghep THEM tool_choice (TUY CHON) vao payload cua
+    // cac mode auto/guided/verbatim - CHI khi duoc truyen ro rang, khong tu
+    // dat mac dinh (giu tuong thich nguoc).
+    if (toolChoice) {
+      payload.tool_choice = toolChoice;
+    }
+    return payload;
   }
 
   // API duy nhat de yeu cau bot noi. Tra ve so generation cua yeu cau nay

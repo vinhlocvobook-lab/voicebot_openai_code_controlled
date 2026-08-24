@@ -594,7 +594,15 @@ test("[Giai doan 6a #2] DANH_BO_MISSING -> danhBoFlow.start() -> danhBoFlow bao 
 
   assert.equal(sayCalls.length, 2, "2 say(): 1 preamble (guided) + 1 doc ket qua that (verbatim)");
   assert.equal(sayCalls[0].mode, "guided", "preamble truoc, KHONG lo du lieu nhay cam nen cho phep model tu bien tau");
-  assert.deepEqual(sayCalls[1], { mode: "verbatim", text: "Kỳ 8/2026: đã có dữ liệu." }, "ket qua THAT phai doc verbatim, khong de model tu dien dat lai");
+  assert.equal(sayCalls[0].toolChoice, "none", "preamble PHAI chan model tu goi tool khac - day chinh la bug that da sua");
+  // [them 24/08/2026 #4, xem "sua 24/08/2026 #4" dau dispatch-tool-call.js]
+  // CA 2 say() phai kem toolChoice:"none" - bug that phat hien: thieu field
+  // nay khien model TU BIA 1 loi goi get_bill khac trong luc nghe preamble.
+  assert.deepEqual(
+    sayCalls[1],
+    { mode: "verbatim", text: "Kỳ 8/2026: đã có dữ liệu.", toolChoice: "none" },
+    "ket qua THAT phai doc verbatim, khong de model tu dien dat lai, VA phai chan model tu goi tool khac",
+  );
 });
 
 test("[Giai doan 6a #2] handleDanhBoFlowDone() noi preamble (mode:guided) TRUOC khi runTool() xong, khong doi tool tra ve moi noi", async () => {
@@ -638,11 +646,12 @@ test("[Giai doan 6a #2] handleDanhBoFlowDone() noi preamble (mode:guided) TRUOC 
   assert.equal(sayCalls.length, 1, "preamble phai duoc noi NGAY, khong doi tool goi lai xong");
   assert.equal(sayCalls[0].mode, "guided");
   assert.ok(sayCalls[0].instructions.length > 0);
+  assert.equal(sayCalls[0].toolChoice, "none", "[them 24/08/2026 #4] preamble phai chan model tu goi tool khac");
 
   resolveHandler();
   await donePromise;
   assert.equal(sayCalls.length, 2, "sau khi tool goi lai xong, phai co them 1 say() verbatim doc ket qua");
-  assert.deepEqual(sayCalls[1], { mode: "verbatim", text: "kết quả sau khi chờ" });
+  assert.deepEqual(sayCalls[1], { mode: "verbatim", text: "kết quả sau khi chờ", toolChoice: "none" });
 });
 
 test("[Giai doan 6a #2] danhBoFlow bao THAT BAI (ok:false) -> KHONG goi lai tool, KHONG say() them gi (giveUp() cua danh-bo-flow.js da tu xin loi roi)", async () => {
@@ -711,6 +720,7 @@ test("[Giai doan 6a #2] handleDanhBoFlowDone() ket qua tra ve THIEU output.messa
 
   const lastSay = sayCalls[sayCalls.length - 1];
   assert.equal(lastSay.mode, "guided", "thieu message -> fallback guided doc tu output tho, khong duoc im lang");
+  assert.equal(lastSay.toolChoice, "none", "[them 24/08/2026 #4] fallback cung phai chan model tu goi tool khac");
 });
 
 test("runTool() dung doc lap (khong can send/turnController gia) - tien ich khi debug rieng 1 tool", async () => {

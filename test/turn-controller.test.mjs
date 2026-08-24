@@ -41,11 +41,51 @@ test("say() mode guided gui instructions dinh huong", () => {
   assert.deepEqual(ws.sent[0].response, { instructions: "Hoi khach muon tra cuu dich vu gi" });
 });
 
-test("say() mode tool gui tool_choice ep goi dung 1 tool", () => {
+// [sua 24/08/2026, xem ghi chu "PHAT HIEN THAT" dau turn-controller.js]
+// Truoc day dung "confirm_danh_bo" (ten ham) lam vi du - GAY HIEU LAM vi
+// gia tri do bi API that TU CHOI (response.tool_choice CHI nhan "auto"/
+// "none"/"required", KHONG nhan ten ham cu the). Ham nay (buildResponsePayload)
+// van CHI la ong dan chuyen tiep nguyen van, nen test van dung ve mat logic
+// pass-through - doi sang "required" (gia tri THAT SU hop le) de khong con
+// ai vo tinh coi day la vi du dung khi copy sang noi khac.
+test("say() mode tool gui tool_choice nguyen van (KHONG tu gioi han gia tri - validate la trach nhiem cua API)", () => {
   const ws = createMockWs();
   const tc = createTurnController(ws);
-  tc.say({ mode: "tool", toolChoice: "confirm_danh_bo" });
-  assert.deepEqual(ws.sent[0].response, { tool_choice: "confirm_danh_bo" });
+  tc.say({ mode: "tool", toolChoice: "required" });
+  assert.deepEqual(ws.sent[0].response, { tool_choice: "required" });
+});
+
+// [them 24/08/2026 #4, xem ghi chu "sua 24/08/2026 #4" o turn-controller.js#
+// buildResponsePayload] Bug that phat hien qua checkpoint-giai-doan-6a.mjs:
+// mode "guided" khong co cach nao chan model TU Y goi tool khac trong luc
+// noi 1 cau preamble - GET_BILL_TOOL van con khai bao suot session nen
+// response.create khong kem tool_choice de model TU DO goi tool, dan toi
+// model tu bia 1 loi goi get_bill (danh bo doan sai) khi nghe "se tra cuu
+// ngay". Sua: MOI mode (khong chi rieng "tool") duoc kem THEM tool_choice
+// (tuy chon) - 3 test duoi day xac nhan dieu do cho guided/verbatim.
+test("say() mode guided KEM toolChoice -> tool_choice duoc ghep them vao response, khong thay the instructions", () => {
+  const ws = createMockWs();
+  const tc = createTurnController(ws);
+  tc.say({ mode: "guided", instructions: "Nói ngắn gọn rằng sẽ tra cứu ngay.", toolChoice: "none" });
+  assert.deepEqual(ws.sent[0].response, {
+    instructions: "Nói ngắn gọn rằng sẽ tra cứu ngay.",
+    tool_choice: "none",
+  });
+});
+
+test("say() mode verbatim KEM toolChoice -> tool_choice duoc ghep them, van giu instructions ep doc nguyen van", () => {
+  const ws = createMockWs();
+  const tc = createTurnController(ws);
+  tc.say({ mode: "verbatim", text: "Kỳ 8/2026: đã có dữ liệu.", toolChoice: "none" });
+  assert.match(ws.sent[0].response.instructions, /Kỳ 8\/2026: đã có dữ liệu\./);
+  assert.equal(ws.sent[0].response.tool_choice, "none");
+});
+
+test("say() mode guided/verbatim KHONG truyen toolChoice -> KHONG co field tool_choice (tuong thich nguoc)", () => {
+  const ws = createMockWs();
+  const tc = createTurnController(ws);
+  tc.say({ mode: "guided", instructions: "Hỏi khách muốn tra cứu dịch vụ gì" });
+  assert.equal("tool_choice" in ws.sent[0].response, false, "khong truyen toolChoice thi khong duoc tu them field nay");
 });
 
 test("say() thieu tham so bat buoc theo mode -> nem loi, KHONG gui gi len ws", () => {
