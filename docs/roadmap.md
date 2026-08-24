@@ -503,7 +503,7 @@ cho cả lộ trình này:
   chữ số, ghi thành `"2203251775"` (10 số). Đây là vấn đề thu thập/xác nhận
   danh bộ qua giọng nói, để lại CHO Giai đoạn 6a/6b xử lý, không sửa ở đây.
 
-- [ ] **Giai đoạn 6a - Phương án A: code/VAD gom transcript (danh bộ).**
+- [x] **Giai đoạn 6a - Phương án A: code/VAD gom transcript (danh bộ).**
   (Quyết định 21/08/2026: tách Giai đoạn 6 cũ thành 6a/6b làm TUẦN TỰ,
   đúng nguyên tắc "viết ít nhất có thể, tự kiểm chứng trước khi qua giai
   đoạn kế" - xem `docs/fix/giai_doan_1_quan_sat_event_that_20260820.md`.
@@ -524,6 +524,103 @@ cho cả lộ trình này:
 
   Test từng matcher bằng fixture transcript riêng lẻ, rồi mới test tích
   hợp qua harness của Giai đoạn 1.
+
+  **Đóng 24/08/2026.** Đúng thiết kế ở trên, cộng thêm những gì chỉ lộ ra
+  khi chạy thật (bằng chứng, không đoán):
+
+  - `scripts/probe-danh-bo-vad.mjs` (thí nghiệm thật trước khi viết state
+    machine) xác nhận 3 điều: `create_response:false` ở VAD mode "digits"
+    hoạt động đúng (0/3 lần có `response.created` tự sinh, kể cả khi phát
+    audio ngay không đợi xác nhận); VAD vẫn tách 1 lượt đọc thành nhiều
+    mảnh `transcript-ready` (2/3 file test bị tách 2 mảnh) - bắt buộc CODE
+    tự gom, không được coi "1 lần gom = 1 câu trả lời đầy đủ"; có "cửa sổ
+    hở" ~200-250ms giữa lúc gọi `setVadMode("digits")` và lúc
+    `session-updated` xác nhận server đã áp dụng xong (đo được cả 3/3 lần
+    chạy) - đúng lớp bug bản cũ từng gặp (dot 15, 04/08/2026: model trả
+    lời SAI đúng trong cửa sổ đó, bị hiểu nhầm là khách phủ định, khoá
+    chết vĩnh viễn 1 mã danh bộ ĐÚNG) mà bản cũ chưa từng sửa tận gốc.
+  - `src/call-flow/danh-bo-flow.js` - state machine DUY NHẤT điều phối:
+    5 phase (`idle -> arming -> asking -> confirming -> done | failed`).
+    Phase "arming" (MỚI, bản cũ KHÔNG có) chặn TẬN GỐC "cửa sổ hở" trên -
+    bỏ qua CÓ Ý mọi tín hiệu (kể cả `transcript-ready`) cho tới khi thấy
+    `session-updated`. Nối lại các mảnh đã viết/test riêng:
+    `session-ws.js#setVadMode` (đổi VAD sang "digits"/"normal"),
+    `turn-controller.js#say` (không viết lại `_speakVerbatim` của bản cũ -
+    cơ chế generation/queue của Giai đoạn 3 đã lo hết race), `danh-bo-
+    collect.js` (gom/chuẩn hoá chữ số qua nhiều `transcript-ready`), `danh-
+    bo-confirm.js` (phân loại đúng/sai/xin đọc lại/đọc số mới/không rõ
+    ràng). QUYẾT ĐỊNH CỐ Ý (dẫn chứng, không đoán): KHÔNG mở khoá
+    `create_response` cho bước xác nhận như "unlocked"/"confirm_tool" bản
+    cũ từng thử - "unlocked" từng làm SẬP 1 cuộc gọi thật trên đúng model
+    đang dùng (model tự gọi tool với số bịa khi mới nghe 4/11 số, xem
+    `fix_migrate_gpt_realtime_21_20260730.md`); CODE luôn chủ động gọi
+    `say()` ở cả 2 bước asking và confirming, không thử nghiệm lại 2
+    phương án đó.
+  - `src/domain/resolve-danh-bo-ref.js` - bản THẬT thay stub tạm của Giai
+    đoạn 5b, giữ nguyên hợp đồng `{ok:true,value}`/`{ok:false,error}` nên
+    `billing.js`/`outages.js`/`tickets.js` không phải sửa gì. Quyết định cốt
+    lõi: `rawArg` (giá trị model tự điền vào tham số tool) BỊ BỎ QUA HOÀN
+    TOÀN - CHỈ tin `callState.danhBo` (do `danh-bo-flow.js` ghi vào SAU KHI
+    khách xác nhận bằng lời thật). Dẫn chứng buộc phải làm vậy: checkpoint
+    Giai đoạn 5b (audio, 23/08/2026) cho thấy model nghe ĐÚNG "2202 325
+    1775" nhưng tự viết lại thành "2203251775" (rớt 1 số) rồi TỰ TIN gọi
+    thẳng `get_bill`; cộng bằng chứng cũ (`fix_migrate_gpt_realtime_21_
+    20260730.md`, đợt "unlocked") model từng tự gọi tool với số bịa khi
+    mới nghe 4/11 số - không có lý do gì để tin `rawArg`.
+  - `src/call-flow/dispatch-tool-call.js` - nối `DANH_BO_MISSING` (do
+    `resolve-danh-bo-ref.js` trả ra khi `callState.danhBo` chưa có) vào
+    `danhBoFlow.start()`, CODE chủ động chiếm lượt nói thay vì để model tự
+    xử lý. Thêm `handleDanhBoFlowDone(result)`: khi `danhBoFlow` xong
+    thành công, CODE (không phải model) tự gọi LẠI đúng tool + rawArgs GỐC
+    đã tạo ra `DANH_BO_MISSING` ban đầu (nhớ trong `pendingDanhBoRetry`),
+    nói 1 câu "preamble" ngắn trong lúc chờ (độ trễ mạng thật đã đo
+    ~2483ms), rồi đọc verbatim đúng `output.message` của kết quả thật -
+    không để model tự diễn đạt lại (rủi ro đọc sai số tiền/ngày tháng đã
+    được `docTienVN()`/`fmtNgay()` định dạng riêng cho TTS). Khi
+    `danhBoFlow` bỏ cuộc: `giveUp()` (trong `danh-bo-flow.js`) tự nói 1 câu
+    xin lỗi + đề nghị chuyển máy, đúng nguyên tắc "Tool Failures" của
+    skill `realtime-voice-prompting` - quyết định này đến từ 1 buổi đóng
+    vai (CSKH + khách hàng) bàn kỹ trước khi viết code, không đoán.
+  - `scripts/gen-sample-6a.mjs` + `scripts/checkpoint-giai-doan-6a.mjs` -
+    checkpoint đầu-cuối THẬT (Realtime API thật + audio TTS thật, 3 file
+    mẫu: mở đầu không đọc danh bộ, đọc 11 chữ số `22023251775`, xác nhận
+    "đúng rồi") - lần đầu tiên toàn bộ dây chuyền Giai đoạn 6a (`danh-bo-
+    flow.js`/`danh-bo-collect.js`/`danh-bo-confirm.js`/`resolve-danh-bo-
+    ref.js`/`dispatch-tool-call.js#handleDanhBoFlowDone`) chạy trong 1
+    cuộc gọi thật, không chỉ unit test với fake.
+
+  **2 bug thật phát hiện qua checkpoint chạy thật (24/08/2026), cả 2 đã
+  sửa và xác nhận lại bằng chính checkpoint đó:**
+
+  1. *VAD-switch race*: `onDone` của `danhBoFlow` gọi `setVadMode("normal")`
+     TRƯỚC khi `handleDanhBoFlowDone()` (bất đồng bộ, chờ kết quả thật từ
+     `tongdai-api.js`) hoàn tất - tạo khoảng hở để VAD tự kích response của
+     CHÍNH model trong lúc code còn đang xử lý, sinh ra 1 lần gọi `get_bill`
+     thứ 3 với mã danh bộ BỊA (`"222217775"`, không khớp số thật). Sửa:
+     `await handleDanhBoFlowDone()` xong rồi mới `setVadMode("normal")`.
+  2. *Model tự gọi tool khi nghe preamble*: câu preamble ("...sẽ tra cứu
+     ngay giúp khách...", mode "guided") không hề chặn `tool_choice` - vì
+     `get_bill` vẫn khai báo suốt session, model tự hiểu câu đó thành chỉ
+     thị hành động và TỰ BỊA 1 lần gọi `get_bill` khác (mã danh bộ bịa dạng
+     `"2,2,2,5,1,1,7,7,5,2"`), chạy đua với lần gọi trực tiếp của code. Sửa:
+     `turn-controller.js#buildResponsePayload` cho phép MỌI mode (không chỉ
+     `"tool"`) được kèm `toolChoice` tuỳ chọn; `handleDanhBoFlowDone()` thêm
+     `toolChoice:"none"` vào cả 4 lượt `say()` của nó - không lượt nói nào
+     trong hàm đó còn được phép để model tự gọi thêm tool nào nữa.
+
+  **Kết quả cuối**: `checkpoint-giai-doan-6a.mjs` **PASS** 2 lần chạy thật
+  liên tiếp (Realtime API thật + audio TTS thật) - đúng 2 lần `get_bill`
+  (không còn lần 3 hallucinate), `callState.danhBo` khớp đúng
+  `22023251775`, tra cứu lại đúng dữ liệu thật (kỳ 8/2026, 428.413đ, đã
+  thanh toán 22/08/2026). 1 lần chạy trung gian (trước khi sửa xong cả 2
+  bug) từng bị STT nghe nhầm vài chữ số của chính audio mẫu - không phải
+  bug code, chỉ là nhiễu STT/TTS ngẫu nhiên giữa các lần chạy (không phải
+  vấn đề của Giai đoạn 6a - Giai đoạn 6b sẽ xử lý bài toán đối chiếu
+  transcript rộng hơn).
+
+  Tổng test hiện tại: 229/229 (local, `node --test`), 244/244 (trên máy
+  chủ dự án - lệch 15 do có thêm `test/calllog-api.test.mjs` không có ở
+  bản upload cục bộ, đã biết là chênh lệch vô hại).
 
 - [ ] **Giai đoạn 6b - Phương án B: model tự thu thập + code đối chiếu
   (danh bộ).** Chỉ bắt đầu sau khi 6a đã xong và có kết quả để so sánh.
