@@ -226,7 +226,18 @@ const { ws, turnController } = connectRealtimeSession({
 
 // [1] callState 1 lan cho CA "cuoc goi" nay - dung y he thong that (server.js
 // sau nay se tao callState MOI cho MOI cuoc goi that).
-const callState = {};
+//
+// [sua 24/08/2026, Giai doan 6a] resolveDanhBoRef (src/domain/resolve-
+// danh-bo-ref.js) doi tu stub "tin thang rawArg model" sang ban THAT "chi
+// tin callState.danhBo, bo qua hoan toan rawArg" - neu khong gan o day,
+// checkpoint nay se LUON nhan DANH_BO_MISSING (dung nhu thiet ke, xem ghi
+// chu trong resolve-danh-bo-ref.js), khong con test duoc phan billing.js/
+// tool-router.js ma checkpoint 5b nay dung de xac nhan. Gan truoc o day de
+// MO PHONG dung tinh huong "danh bo DA duoc danh-bo-flow.js (Giai doan 6a)
+// xac nhan tu truoc trong cuoc goi" - checkpoint nay khong nham xac nhan
+// luong thu thap qua VAD (viec do la scripts/checkpoint-giai-doan-6a*.mjs,
+// chua viet), chi tiep tuc xac nhan billing.js/tool-router.js nhu cu.
+const callState = { danhBo: MA_DANH_BO };
 const router = createToolRouter({
   getTrangThaiTT,
   getSoSanhTangGiam,

@@ -43,27 +43,31 @@ test("createToolRouter: tra ve DUNG 10 ten tool xac nhan tu system-prompt.js, de
   assert.deepEqual(Object.keys(router).sort(), expectedNames.sort());
 });
 
+// [sua 24/08/2026, Giai doan 6a] resolveDanhBoRef ban THAT chi tin
+// callState.danhBo (xem ghi chu o cac test "resolveDanhBoRef THAT" duoi) -
+// 4 test dinh tuyen duoi day KHONG nham xac nhan resolveDanhBoRef, nen gan
+// san callState.danhBo de tap trung dung vao dieu dang test (dinh tuyen).
 test("get_bill: dinh tuyen dung toi billing.js, tra ve object (khong phai Promise/string)", async () => {
-  const router = createToolRouter(makeFakeDeps());
+  const router = createToolRouter({ ...makeFakeDeps(), callState: { danhBo: "22023251775" } });
   const out = await router.get_bill({ ma_danh_bo: "22023251775", ky: 8, nam: 2026 });
   assert.equal(out.success, true);
   assert.match(out.message, /Kỳ 8\/2026/);
 });
 
 test("compare_usage: dinh tuyen dung toi billing.js", async () => {
-  const router = createToolRouter(makeFakeDeps());
+  const router = createToolRouter({ ...makeFakeDeps(), callState: { danhBo: "22023251775" } });
   const out = await router.compare_usage({ ma_danh_bo: "22023251775" });
   assert.deepEqual(out, { success: true, message: "ok", data: { tang_giam_percent: 3 } });
 });
 
 test("get_outages: dinh tuyen dung toi outages.js", async () => {
-  const router = createToolRouter(makeFakeDeps());
+  const router = createToolRouter({ ...makeFakeDeps(), callState: { danhBo: "22023251775" } });
   const out = await router.get_outages({ ma_danh_bo: "22023251775" });
   assert.equal(out.message, "Bình thường.");
 });
 
 test("create_ticket: dinh tuyen dung toi tickets.js", async () => {
-  const router = createToolRouter(makeFakeDeps());
+  const router = createToolRouter({ ...makeFakeDeps(), callState: { danhBo: "22023251775" } });
   const out = await router.create_ticket({ ma_danh_bo: "22023251775", loai: "su_co", mo_ta: "x" });
   assert.equal(out.success, true);
 });
@@ -141,20 +145,32 @@ test("leave_callback_message dung DUNG callState.callerPhone khi router duoc tao
   assert.equal(calls[0], "0909999888");
 });
 
-test("resolveDanhBoRef THAT (khong phai ham gia) duoc dung ben trong - ma_danh_bo hop le -> di toi tan getTrangThaiTT", async () => {
+// [24/08/2026, Giai doan 6a] resolveDanhBoRef chuyen tu stub "tin thang
+// rawArg" sang ban THAT "chi tin callState.danhBo, bo qua hoan toan rawArg"
+// - 2 test duoi day cap nhat theo dung hop dong MOI (xem ghi chu dau
+// src/domain/resolve-danh-bo-ref.js va test/resolve-danh-bo-ref.test.mjs
+// cho case unit rieng).
+test("resolveDanhBoRef THAT (khong phai ham gia) duoc dung ben trong - callState.danhBo da co -> " +
+  "dung DUNG gia tri do, BO QUA hoan toan ma_danh_bo model truyen vao", async () => {
   const calls = [];
-  const router = createToolRouter(makeFakeDeps({
-    getTrangThaiTT: async (danhba, ky, nam) => {
-      calls.push(danhba);
-      return { success: true, data: [] };
-    },
-  }));
+  const callState = { danhBo: "22023251775" };
+  const router = createToolRouter({
+    ...makeFakeDeps({
+      getTrangThaiTT: async (danhba, ky, nam) => {
+        calls.push(danhba);
+        return { success: true, data: [] };
+      },
+    }),
+    callState,
+  });
 
-  await router.get_bill({ ma_danh_bo: "  22023251775  " }); // co khoang trang - resolveDanhBoRef phai trim
-  assert.equal(calls[0], "22023251775");
+  // Model truyen 1 ma SAI/khac han - phai bi bo qua, khong duoc dung tra cuu.
+  await router.get_bill({ ma_danh_bo: "00000000000" });
+  assert.equal(calls[0], "22023251775", "phai dung callState.danhBo, khong dung rawArg model truyen vao");
 });
 
-test("resolveDanhBoRef THAT: ma_danh_bo rong -> khong goi duoc API, tra ve loi DANH_BO_MISSING", async () => {
+test("resolveDanhBoRef THAT: callState.danhBo CHUA co -> khong goi duoc API, tra ve loi DANH_BO_MISSING " +
+  "(KE CA khi model tu dien 1 ma_danh_bo HOP LE - nguyen tac an toan cot loi Giai doan 6a)", async () => {
   let called = false;
   const router = createToolRouter(makeFakeDeps({
     getTrangThaiTT: async () => {
@@ -163,7 +179,7 @@ test("resolveDanhBoRef THAT: ma_danh_bo rong -> khong goi duoc API, tra ve loi D
     },
   }));
 
-  const out = await router.get_bill({ ma_danh_bo: "" });
+  const out = await router.get_bill({ ma_danh_bo: "22023251775" });
   assert.equal(called, false);
   assert.equal(out.error_code, "DANH_BO_MISSING");
 });

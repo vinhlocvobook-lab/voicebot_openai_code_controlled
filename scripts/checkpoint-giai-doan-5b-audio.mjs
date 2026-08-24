@@ -206,7 +206,19 @@ const { ws, turnController } = connectRealtimeSession({
   },
 });
 
-const callState = {};
+// [sua 24/08/2026, Giai doan 6a] resolveDanhBoRef doi sang ban THAT - chi
+// tin callState.danhBo, bo qua hoan toan rawArg model truyen vao (xem ghi
+// chu day du trong scripts/checkpoint-giai-doan-5b.mjs va src/domain/
+// resolve-danh-bo-ref.js). Gan truoc o day de MO PHONG "danh bo DA duoc
+// danh-bo-flow.js xac nhan tu truoc" - vi vay tu lan chay nay tro di,
+// checkpoint se KHONG con tai hien duoc phat hien "model nghe dung nhung
+// viet lai sai 1 so" da ghi trong docs/roadmap.md (Giai doan 5b) - dung y
+// muon: chinh Giai doan 6a duoc dung ra de xoa bo hoan toan duong hong do
+// (model khong con co co hoi lam sai lech du lieu tra cuu nua, bat ke nghe
+// dung hay sai). Muon tai hien lai phat hien cu (chi de doi chieu lich su,
+// KHONG con phan anh hanh vi that cua he thong sau Giai doan 6a) thi doi
+// dong nay lai thanh `const callState = {};`.
+const callState = { danhBo: MA_DANH_BO };
 const router = createToolRouter({
   getTrangThaiTT,
   getSoSanhTangGiam,
