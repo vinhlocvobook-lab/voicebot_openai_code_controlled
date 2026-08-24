@@ -462,10 +462,27 @@ async function main() {
   await waitForPhase(["done", "failed"], 15000, "cho danhBoFlow ket thuc (done/failed)");
   tee(`[checkpoint-6a] danhBoFlow ket thuc voi phase: ${danhBoFlow.getPhase()}`);
 
-  // Doi them cho lan goi LAI get_bill (handleDanhBoFlowDone, co do tre mang
-  // that toi tongdai-api.js - da do duoc ~2483ms o Giai doan 5b) + say()
-  // verbatim doc ket qua kip xay ra truoc khi tong ket.
-  await sleep(6000);
+  // [sua 24/08/2026 #9, PHAT HIEN THAT qua checkpoint chay voi samples/
+  // 2_22082351775_lienmach_noise1.wav] Doi them cho lan goi LAI get_bill
+  // (handleDanhBoFlowDone, co do tre mang that toi tongdai-api.js) + say()
+  // verbatim doc ket qua kip xay ra truoc khi tong ket. Gia tri CU (6000ms)
+  // dua tren 1 lan do THAT truoc do (~2483ms, Giai doan 5b) nhung KHONG tinh
+  // toi truong hop XAU NHAT: tongdai-api.js#callApi() tu dat AbortController
+  // voi TONGDAI_API_TIMEOUT_MS (mac dinh 15000ms, xem _config() dau file do)
+  // - neu tunnel/mang that cham/khong phan hoi, request van con "dang cho"
+  // toi tan 15s truoc khi tu bien thanh TIMEOUT. Du lieu that xac nhan dung
+  // dieu nay xay ra: chay voi noise1.wav, request GET that (thay trong log,
+  // dung danh bo 22023251775 - CHUNG MINH resolveDanhBoRef dung callState.
+  // danhBo, khong phai rawArg rac "undefined") da gui luc +19071ms nhung
+  // KHONG CO PHAN HOI nao (thanh cong lan loi) truoc khi finish()
+  // process.exit() giet ca tien trinh o +25491ms (~6.4s sau, con trong
+  // nguong 15s that cua timeoutMs) - getBillCalls chi con 1 phan tu, say()
+  // chi con 2 lan, checkpoint bao "CAN XEM LAI" DU dispatch-tool-call.js/
+  // danh-bo-flow.js KHONG co gi sai (chi la CHUA KIP xong). Sua: tang len
+  // 18000ms (15000ms timeoutMs + 3000ms du de request thanh cong that su +
+  // say() verbatim kip gui response.create) - AN TOAN HON, khong doan lai
+  // gia tri cu.
+  await sleep(18000);
 
   finish(0);
 }

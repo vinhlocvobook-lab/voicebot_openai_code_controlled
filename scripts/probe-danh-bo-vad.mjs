@@ -47,15 +47,27 @@
 // TUY CHON: ma danh bo MONG DOI, de doi chieu TRUC TIEP voi candidate that
 // su danh-bo-collect.js (module THAT, khong phai ban sao/mo phong) gom
 // duoc tu CHINH cac manh transcript vua nhan - KHONG can chay qua toan bo
-// checkpoint-giai-doan-6a.mjs (von gan chat voi 1 ma danh bo CO du lieu
-// billing that, cac file "tap am" hien co lai doc 1 ma KHAC (22082351775)
-// CHUA xac nhan co du lieu that trong moi truong test - xem ghi chu file
-// audit) - script nay chi can biet CANDIDATE co dung khong, khong lien
-// quan gi toi viec tra cuu hoa don co thanh cong hay khong. Vi du dung cho
-// tap am (5 file, muc do tang dan noise1->noise5):
-//   node scripts/probe-danh-bo-vad.mjs samples/2_22082351775_lienmach_noise1.wav 22082351775
-//   node scripts/probe-danh-bo-vad.mjs samples/2_22082351775_lienmach_noise3.wav 22082351775
-//   node scripts/probe-danh-bo-vad.mjs samples/2_22082351775_lienmach_noise5.wav 22082351775
+// checkpoint-giai-doan-6a.mjs, script nay chi can biet CANDIDATE co dung
+// khong, khong lien quan gi toi viec tra cuu hoa don co thanh cong hay
+// khong. Vi du dung cho tap am (5 file, muc do tang dan noise1->noise5):
+//   node scripts/probe-danh-bo-vad.mjs samples/2_22082351775_lienmach_noise1.wav 22023251775
+//   node scripts/probe-danh-bo-vad.mjs samples/2_22082351775_lienmach_noise3.wav 22023251775
+//   node scripts/probe-danh-bo-vad.mjs samples/2_22082351775_lienmach_noise5.wav 22023251775
+//
+// [SUA 24/08/2026 #8, chu du an tu bao dat ten file NHAM] File
+// "2_22082351775_lienmach.wav" VA CA 5 file "..._lienmach_noise1-5.wav" -
+// du ten file ghi "22082351775" - THAT SU doc so "22023251775" (CUNG ma
+// danh bo co du lieu billing that, dung MA_DANH_BO trong checkpoint-giai-
+// doan-6a.mjs). Lan chay dau tien (truoc khi biet dieu nay) da truyen NHAM
+// "22082351775" lam expectedDanhBo cho 3 file noise1/noise3/noise5, khien
+// noise1/noise3 bi bao cao SAI ("KHONG KHOP")/"nghe nham 082->023" trong
+// docs/fix/giai_doan_6a_audit_kich_ban_da_test_20260824.md (muc "Cap nhat
+// #2") - KET LUAN DO SAI, da dinh chinh lai trong file audit do (candidate
+// that su KHOP DUNG voi "22023251775" khi dung expectedDanhBo dung). Vi du
+// tren DA SUA dung "22023251775", khong con "22082351775" nua. File
+// "2_22082351775.wav" (KHONG co "_lienmach") KHONG bi anh huong - transcript
+// that cua no ("2208" + "2351 775.") tu no da khop dung ten file
+// ("22082351775"), khong can dinh chinh.
 //
 // KET QUA: logs/probe-danh-bo-vad-<file>-<timestamp>.jsonl (toan bo event
 // tho, dung dinh dang probe-realtime.mjs de doi chieu duoc voi log Giai

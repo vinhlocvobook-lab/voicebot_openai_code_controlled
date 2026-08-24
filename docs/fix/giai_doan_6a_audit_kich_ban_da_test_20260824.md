@@ -33,10 +33,12 @@ sửa.
 
 **Chưa test ở mức này**: xác nhận SAI rồi đọc lại, xin nhắc lại câu hỏi,
 đọc lại số mới giữa lúc xác nhận, quá số lần thử (giveUp), watchdog hết
-hạn, đọc số có khoảng nghỉ/ngập ngừng, đọc số liền mạch không nghỉ, có tạp
-âm nền, đọc dư/thiếu số, dùng 3 tool khác `get_bill`
+hạn, đọc số có khoảng nghỉ/ngập ngừng, đọc số liền mạch không nghỉ, đọc
+dư/thiếu số, dùng 3 tool khác `get_bill`
 (`compare_usage`/`get_outages`/`create_ticket`) bị chặn bởi
-`DANH_BO_MISSING`.
+`DANH_BO_MISSING`. ~~có tạp âm nền~~ - **đã lấp**, xem "Cập nhật 24/08/2026
+#5" bên dưới (PASS với noise1, cả nhánh tra cứu thành công lẫn nhánh lỗi hệ
+thống).
 
 ## Mức 2 - Có audio thật, có API thật, nhưng CHỈ đo hành vi VAD (probe-danh-bo-vad.mjs) - CHƯA chạy qua danh-bo-flow.js
 
@@ -48,7 +50,7 @@ machine. Dữ liệu thật (grep trực tiếp từ log `.jsonl`, không suy đ
 | File audio | Khách đọc thế nào | Số mảnh VAD tách | Transcript từng mảnh | `response.created` tự sinh |
 |---|---|---|---|---|
 | `2_22082351775.wav` | bình thường, có ngừng giữa các cụm số | 2 | `"2208"` + `"2351 775."` | 0 |
-| `2_22082351775_lienmach.wav` | liền mạch, không ngừng | 1 | `"2202 3251 775."` | 0 |
+| `2_22082351775_lienmach.wav` [^ten-file-nham] | liền mạch, không ngừng | 1 | `"2202 3251 775."` | 0 |
 | `6_ngap_ngung.wav` | **ngập ngừng** (đúng ví dụ chủ dự án nêu) | 2 | `"2202.3251"` + `"775."` | 0 |
 
 (log: `logs/probe-danh-bo-vad-2_22082351775-1787540601007.jsonl`,
@@ -105,9 +107,12 @@ STT có phiên ra đúng dạng câu mà các test này giả định hay không
   hoá đơn trước, hỏi báo sự cố sau, cả 2 đều cần danh bộ) - có tận dụng
   đúng `callState.danhBo` đã biết từ lần trước không, hay kích hoạt lại
   toàn bộ luồng thu thập.
-- Tạp âm nền TRONG LÚC đọc số (có sẵn `samples/4_tap_am.wav` và 5 file
-  `2_22082351775_lienmach_noise1-5.wav` nhưng chưa dùng cho riêng luồng
-  danh bộ này).
+- ~~Tạp âm nền TRONG LÚC đọc số~~ - **đã test ở Mức 1 với noise1** (PASS,
+  xem "Cập nhật 24/08/2026 #5"). `samples/4_tap_am.wav` và noise2/noise4/
+  noise5 (vừa/nặng hơn) vẫn chưa dùng qua checkpoint thật - noise5 riêng đã
+  biết trước (Mức 2) là VAD không phát hiện được giọng nói, khả năng cao
+  checkpoint sẽ timeout ở bước chờ "asking"/"confirming", chưa xác nhận
+  thật.
 - Khách đọc THỪA số (hơn 11 số) hoặc dừng giữa chừng rồi im lặng kéo dài.
 - `checkWatchdog`/`giveUp` bằng 1 cuộc gọi thật để im lặng đủ lâu (hiện
   chỉ gọi `checkWatchdog(nowMs)` bằng tay trong unit test).
@@ -189,3 +194,140 @@ khách sẽ phải đọc lại từ đầu (không tự động, cần watchdog
 Còn lại 2 việc ưu tiên (xác nhận SAI qua audio thật, sửa lỗ hổng
 confirm-sai-rồi-fail) - chưa làm, sẽ cập nhật tiếp file này khi có kết
 quả.
+
+## Đính chính 24/08/2026 #3 - tên file ghi âm `..._lienmach*.wav` đặt NHẦM số, kéo theo 1 kết luận sai ở mục "Tạp âm" bên trên
+
+Chủ dự án báo lại: **`2_22082351775_lienmach.wav` và cả 5 file
+`2_22082351775_lienmach_noise1-5.wav` - dù tên file ghi `22082351775` -
+THẬT SỰ đọc số `22023251775`** (đặt tên nhầm lúc thu âm). Đây CHÍNH LÀ mã
+danh bộ đã xác nhận có dữ liệu billing thật (`MA_DANH_BO` trong
+`checkpoint-giai-doan-6a.mjs`), khác với suy đoán trước đó (comment cũ
+trong `probe-danh-bo-vad.mjs` cho rằng nhóm file này đọc 1 mã KHÁC,
+`22082351775`, chưa xác nhận có dữ liệu billing).
+
+**Ảnh hưởng trực tiếp tới bảng kết quả "Tạp âm" ở mục Cập nhật #2 phía
+trên**: 3 lần chạy `probe-danh-bo-vad.mjs` cho noise1/noise3/noise5 khi đó
+đã truyền SAI `expectedDanhBo=22082351775` (theo đúng tên file, lúc đó
+chưa biết tên file nhầm) để đối chiếu candidate. Kết quả:
+
+| File | Candidate gom được (không đổi, vẫn ĐÚNG dữ liệu STT thật) | Kết luận CŨ (SAI, so với 22082351775) | Kết luận ĐÚNG (so với 22023251775 - số THẬT SỰ được đọc) |
+|---|---|---|---|
+| noise1 (nhẹ) | `22023251775` | SAI (nghe nhầm "082"→"023") | **KHỚP ĐÚNG** - STT nghe ĐÚNG, không hề nhầm |
+| noise3 (vừa) | `22023251775` (từ 12 số gom được, lấy 11 số đầu) | SAI (cùng kiểu nhầm, dư 1 số) | **KHỚP ĐÚNG** ở 11 số đầu - STT nghe ĐÚNG phần lõi 11 số, chỉ dư 1 số cuối (`danh-bo-collect.js` đã tự cắt đúng) |
+| noise5 (nặng) | `null` (0 số, VAD không phát hiện giọng nói) | không đổi | không đổi - kết luận này KHÔNG phụ thuộc expectedDanhBo, vẫn đúng |
+
+**Rút lại hoàn toàn kết luận "STT nghe nhầm một cách tự tin (082→023)"** ở
+mục Cập nhật #2 - đây là suy diễn từ 1 giá trị đối chiếu (`expectedDanhBo`)
+bị sai do tên file nhầm, KHÔNG phải hành vi thật của STT. Số liệu THẬT
+(chưa từng thay đổi, chỉ có giá trị đối chiếu là sai) cho thấy điều
+NGƯỢC LẠI: nhiễu nhẹ/vừa KHÔNG làm STT nghe sai chữ số nào trong lõi 11 số
+(`gpt-4o-transcribe` vẫn nghe đúng qua tạp âm ở 2 mức thử nghiệm này) -
+noise3 chỉ dư thêm 1 chữ số ở cuối (được xử lý an toàn bởi thiết kế cắt-11-
+số-đầu có sẵn của `danh-bo-collect.js`, không phải lỗi). Rủi ro thật duy
+nhất còn lại từ dữ liệu này là ở noise5 (nhiễu nặng): VAD không phát hiện
+được giọng nói nào, không liên quan tới việc nghe nhầm chữ số.
+
+**Hệ quả tích cực chưa khai thác**: vì noise1.wav/noise3.wav (dạng
+`_lienmach_noise*`) đọc ĐÚNG mã có dữ liệu billing thật (`22023251775`),
+2 file này giờ CÓ THỂ chạy thẳng qua `checkpoint-giai-doan-6a.mjs` (đã hỗ
+trợ sẵn tham số dòng lệnh, không cần sửa code) để có 1 bài test tạp âm ở
+**Mức 1** (chạy trọn qua `danh-bo-flow.js` + tra cứu billing thật) thay vì
+chỉ dừng ở Mức 2 (đối chiếu candidate qua probe) như trước - đúng mục còn
+thiếu đã liệt kê ở "Kịch bản CHƯA được test" phía trên ("Tạp âm nền TRONG
+LÚC đọc số"). Lệnh chạy (không cần sửa gì, `MA_DANH_BO` trong checkpoint
+đã sẵn là `22023251775`, khớp đúng):
+
+```
+node scripts/checkpoint-giai-doan-6a.mjs samples/2_22082351775_lienmach_noise1.wav
+node scripts/checkpoint-giai-doan-6a.mjs samples/2_22082351775_lienmach_noise3.wav
+```
+
+Đã sửa lại comment/ví dụ liên quan trong `scripts/probe-danh-bo-vad.mjs`
+("sua 24/08/2026 #8") để không còn truyền nhầm `22082351775` cho nhóm file
+này nữa.
+
+## Cập nhật 24/08/2026 #4 - đã chạy `checkpoint-giai-doan-6a.mjs` thật với noise1/noise3
+
+Kết quả (chủ dự án tự chạy trên máy, dán lại log thật):
+
+**noise1 (nhẹ)**: `danhBoFlow` kết thúc ở `done`, `callState.danhBo` đúng
+`22023251775` - **phần thu thập + xác nhận số qua tạp âm nhẹ, chạy trọn
+qua chính `danh-bo-flow.js` bằng audio thật, THÀNH CÔNG** (đúng đây là mục
+tiêu chính của bài test tạp âm, khác với "tra cứu lại có thành công hay
+không" là bước SAU đó). Nhưng tiêu chí (d) báo `false` - vì lần gọi lại
+`get_bill` (sau xác nhận) THẬT SỰ đã được gửi đi đúng (log thật: request
+GET dùng `danhba=22023251775` - đúng `callState.danhBo`, KHÔNG dùng
+`rawArgs` gốc rác `"undefined"` mà model đã tự bịa lúc bị ép gọi tool -
+bằng chứng thật thêm 1 lần nữa cho thiết kế an toàn của
+`resolveDanhBoRef`), nhưng KHÔNG kịp có phản hồi (thành công hay lỗi) trước
+khi `checkpoint-giai-doan-6a.mjs` thoát tiến trình. Nguyên nhân: script
+checkpoint có `await sleep(6000)` cố định sau khi `danhBoFlow` xong, nhưng
+`tongdai-api.js#callApi()` tự đặt `AbortController` chờ tới
+`TONGDAI_API_TIMEOUT_MS` (mặc định 15000ms) trước khi tự biến thành
+`TIMEOUT` - 6s là KHÔNG ĐỦ AN TOÀN cho trường hợp mạng/tunnel chậm. Đây là
+**giới hạn của SCRIPT CHECKPOINT (hạ tầng test), không phải bug ở
+`dispatch-tool-call.js`/`danh-bo-flow.js`** - đã sửa (`sua 24/08/2026 #9`,
+tăng lên 18000ms = 15000ms timeoutMs thật + 3000ms dư).
+
+**noise3 (vừa)**: `danhBoFlow` kết thúc ở `done`, `callState.danhBo` đúng
+`22023251775` - CŨNG thành công ở bước thu thập/xác nhận. Lần gọi lại
+`get_bill` LẦN NÀY kịp có phản hồi: `CONNECTION_ERROR` thật (không kết nối
+được tới máy chủ tongdai - lỗi hạ tầng/tunnel thời điểm chạy, không liên
+quan tạp âm/STT). **Đây là bằng chứng THẬT ĐẦU TIÊN xác nhận nhánh "lỗi hệ
+thống" của fix #7 (`handleDanhBoFlowDone`, xem `dispatch-tool-call.js` "them
+24/08/2026 #7") hoạt động ĐÚNG THIẾT KẾ qua Realtime API thật + mạng thật**:
+code nói ĐÚNG NGUYÊN VĂN câu xin lỗi + chuyển máy
+(`LOOKUP_SYSTEM_ERROR_TEXT`), KHÔNG mời đọc lại (đúng quyết định thiết kế
+đã chốt - lỗi hệ thống doc lại vô ích), KHÔNG gọi thêm `get_bill`/
+`danhBoFlow.start()` nào nữa (đúng 2 lần gọi tool, dừng đúng lúc).
+
+**Tóm lại sau lần chạy này**: mục tiêu ban đầu của bài test tạp âm (thu
+thập/xác nhận số qua tạp âm chạy trọn qua state machine thật) đã **PASS ở
+cả noise1 và noise3**. Phần "tra cứu lại thành công với dữ liệu thật" chưa
+có bằng chứng THÀNH CÔNG (chỉ có bằng chứng nhánh lỗi hệ thống hoạt động
+đúng) do 2 lần chạy đều gặp trục trặc hạ tầng mạng/tunnel thời điểm đó,
+không phải do code. Đã tăng thời gian chờ trong script (18000ms) - cần chạy
+lại để xác nhận.
+
+## Cập nhật 24/08/2026 #5 - chạy lại noise1 với wait 18000ms - PASS, có bằng chứng THẬT cho CẢ 2 nhánh của fix #7
+
+Chủ dự án chạy lại `node scripts/checkpoint-giai-doan-6a.mjs
+samples/2_22082351775_lienmach_noise1.wav` 2 lần liên tiếp, chủ động test
+cả 2 tình huống hạ tầng:
+
+**Lần 1 - API server (tongdai) đang KHÔNG kết nối được**: `get_bill` lần
+gọi lại trả về `CONNECTION_ERROR` thật (lần này wait đủ 18s nên có phản hồi
+rõ ràng, không còn bị cắt ngang như "Cập nhật #4"). Nhánh lỗi hệ thống của
+`handleDanhBoFlowDone` (fix #7) chạy đúng: nói đúng nguyên văn
+`LOOKUP_SYSTEM_ERROR_TEXT`, dừng lại (không mời đọc lại, không gọi thêm
+tool) - khớp `logs/checkpoint6a-1787569983338.txt`.
+
+**Lần 2 - API server OK**: `get_bill` lần gọi lại **THÀNH CÔNG THẬT** -
+kỳ 8/2026, sản lượng 24 m³, tổng tiền 428.413đ, đã thanh toán 22/08/2026
+(cùng dữ liệu billing thật đã thấy ở lần PASS đầu tiên của Giai đoạn 6a).
+`turnController.say()` đọc verbatim đúng `output.message`, không đi qua
+nhánh lỗi nào. **KẾT QUẢ: PASS** cả 4 tiêu chí (a)-(d) -
+`logs/checkpoint6a-1787570060983.txt`.
+
+Vậy audio tạp âm nhẹ (noise1) giờ đã có bằng chứng THẬT cho **toàn bộ 3
+nhánh liên quan**: (1) thu thập/xác nhận số qua tạp âm chạy trọn qua
+`danh-bo-flow.js` thật, (2) tra cứu lại THÀNH CÔNG với dữ liệu billing
+thật (đúng use-case chính), (3) tra cứu lại THẤT BẠI vì lỗi hệ thống, code
+xử lý đúng thiết kế fix #7 (xin lỗi + chuyển máy, không mời đọc lại vô
+ích). Cả 2 lần đều dùng rawArgs GỐC là chuỗi rác model tự bịa (`"undefined"`
+lần trước, `""` lần lỗi hệ thống, `"?"` lần thành công) - `resolveDanhBoRef`
+đều bỏ qua đúng thiết kế, chỉ dùng `callState.danhBo` thật.
+
+**Coi như đã đóng mục "Tạp âm nền TRONG LÚC đọc số" ở Mức 1** (trước đây
+liệt kê trong "Kịch bản CHƯA được test" của Mức 1, phía trên) - đã chạy
+trọn qua Realtime API thật + audio tạp âm thật + tra cứu billing thật,
+PASS. `MAX_DANH_BO_LOOKUP_RETRIES` (nhánh lỗi dữ liệu, mời đọc lại tối đa 2
+lần) của fix #7 vẫn CHƯA có bằng chứng thật qua audio (chỉ có unit test) -
+cần 1 kịch bản audio riêng (model đọc/nghe SAI 1 số dẫn tới
+`CUSTOMER_NOT_FOUND` thật) để test, gộp chung với việc còn lại "xác nhận
+SAI qua audio thật".
+
+[^ten-file-nham]: Tên file ghi `22082351775` nhưng THẬT SỰ đọc
+    `22023251775` - xem "Đính chính 24/08/2026 #3" bên dưới. Transcript ở
+    bảng này không đổi (dữ liệu STT thật), chỉ là tên/nhãn mã danh bộ gán
+    cho file bị nhầm lúc thu âm.
