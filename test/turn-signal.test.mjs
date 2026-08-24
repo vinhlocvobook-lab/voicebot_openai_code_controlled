@@ -62,6 +62,14 @@ test("cac event tho don le duoc chuan hoa dung field", () => {
     { kind: "error", raw: { message: "loi mau" } },
   );
 
+  // [bo sung 24/08/2026, Giai doan 6a] xem chu thich dau turn-signal.js -
+  // truoc day roi vao "ignored", nay chuan hoa rieng cho co "cong arming"
+  // cua danh-bo-flow.js (dang viet).
+  assert.deepEqual(
+    normalizeTurnEvent({ type: "session.updated" }),
+    { kind: "session-updated" },
+  );
+
   // [Giai doan 5a, 23/08/2026] Event that, copy nguyen tu logs/probe-tool-
   // call-1787384731754.jsonl (xem test/fixtures/tool-call-events.jsonl) -
   // loi AI noi (commentary truoc khi goi tool), khong bia du lieu.
@@ -169,7 +177,8 @@ test("replay toan bo fixture: dem dung so luong tin hieu theo kind, khong lam ro
   for (const s of signals) tally[s.kind] = (tally[s.kind] ?? 0) + 1;
 
   assert.deepEqual(tally, {
-    ignored: 2, // session.created, session.updated
+    ignored: 1, // session.created (session.updated nay da chuan hoa rieng, xem duoi)
+    "session-updated": 1,
     "speech-started": 3, // 2 luot binh thuong + 1 luot barge-in truoc khi response bi cancel
     "speech-stopped": 2,
     "buffer-committed": 2,
@@ -194,7 +203,8 @@ test("[Giai doan 5a] replay fixture tool-call that: chi dung 1 tin hieu tool-cal
   // vao fixture (loi AI noi "commentary" truoc tool-call) -> them 1 tin
   // hieu ai-said, ignored giu nguyen 9 (dong them KHONG roi vao ignored).
   assert.deepEqual(tally, {
-    ignored: 9, // session.created, session.updated, conversation.item.added, 2x output_item.added, function_call_arguments.delta, 2x output_item.done, rate_limits.updated
+    ignored: 8, // session.created, conversation.item.added, 2x output_item.added, function_call_arguments.delta, 2x output_item.done, rate_limits.updated
+    "session-updated": 1, // session.updated - nay da chuan hoa rieng, xem test tren
     "response-started": 1,
     "ai-said": 1,
     "tool-call-requested": 1,

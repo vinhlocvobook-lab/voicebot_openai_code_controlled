@@ -44,6 +44,23 @@
 //     JSON.parse o day) - de con debug duoc khi model sinh JSON hong,
 //     ben goi (dispatcher, chua lam) tu parse va tu xu ly loi.
 //   - error
+//   - session.updated (Giai doan 6a, 24/08/2026 - xem docs/roadmap.md muc
+//     "Giai doan 6a") - server xac nhan MOT session.update da duoc AP DUNG
+//     XONG (khong phai luc TA gui, la luc SERVER xu ly xong). Truoc day roi
+//     vao "ignored" (co chu dich, chua co nhu cau dung toi luc Giai doan
+//     1-5). Ly do can chuan hoa rieng: xac nhan THAT bang
+//     scripts/probe-danh-bo-vad.mjs (chay that, khong doan) - co "cua so ho
+//     hong" ~200-250ms giua luc gui session.update doi turn_detection sang
+//     "digits" va luc session.updated ve xac nhan da ap dung xong; ban cu
+//     (voice_bot/) tung gap dung lop bug nay (fix_migrate_gpt_realtime_21_
+//     20260730.md, dot 15, 04/08/2026 - model tra loi SAI dung trong cua so
+//     do, bi hieu nham la khach phu dinh, khoa chet vinh vien 1 ma danh bo
+//     DUNG that) - CHUA TUNG duoc sua tan goc o ban cu. danh-bo-flow.js
+//     (Giai doan 6a, dang viet) dung tin hieu nay lam cong "arming": sau
+//     khi goi setVadMode("digits"), CHO tin hieu nay ve moi bat dau tin cac
+//     transcript-ready la khach dang doc so - watchdog chung (90s, da co)
+//     la luoi an toan cuoi neu vi ly do gi session.updated khong bao gio
+//     ve (khong can them 1 timer rieng cho truong hop hiem nay).
 // Event nao chua gap/chua can dung se roi vao nhanh "ignored" - khong lam
 // crash, chi bao hieu "chua xu ly", de call-flow tu quyet dinh co bo qua
 // that hay khong. Cac event khac lien quan tool-call quan sat duoc o Giai
@@ -117,6 +134,11 @@ export function normalizeTurnEvent(rawEvent) {
 
     case "error":
       return { kind: "error", raw: rawEvent.error ?? rawEvent };
+
+    // [bo sung 24/08/2026, Giai doan 6a] Xem chu thich dau file - truoc day
+    // roi vao "ignored" cung nhom voi session.created.
+    case "session.updated":
+      return { kind: "session-updated" };
 
     default:
       return { kind: "ignored", rawType: rawEvent.type };
