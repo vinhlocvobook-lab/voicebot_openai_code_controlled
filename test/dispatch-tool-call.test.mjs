@@ -723,6 +723,206 @@ test("[Giai doan 6a #2] handleDanhBoFlowDone() ket qua tra ve THIEU output.messa
   assert.equal(lastSay.toolChoice, "none", "[them 24/08/2026 #4] fallback cung phai chan model tu goi tool khac");
 });
 
+// ─── [them 24/08/2026 #7] "xac nhan DUNG danh bo nhung tra cuu LAI van that ──
+// bai" - xem QUYET DINH THIET KE dau src/call-flow/dispatch-tool-call.js
+// (roleplay CSKH + AskUserQuestion 24/08/2026): loi HE THONG (TIMEOUT/
+// CONNECTION_ERROR/INVALID_RESPONSE) -> xin loi + chuyen may NGAY, khong moi
+// doc lai; loi DU LIEU (moi ma khac) -> CODE tu moi doc lai toi da 2 lan roi
+// moi chuyen may.
+
+test("[Giai doan 6a #7] tra cuu lai that bai LOI HE THONG (TIMEOUT) -> xin loi + chuyen may NGAY, KHONG goi danhBoFlow.start() (khong moi doc lai)", async () => {
+  const startCalls = [];
+  const danhBoFlow = { start: (reason, nowMs) => startCalls.push({ reason, nowMs }) };
+  let callCount = 0;
+  const { dispatcher, sayCalls } = makeFakes(
+    {
+      get_bill: async () => {
+        callCount += 1;
+        if (callCount === 1) {
+          return { success: false, error_code: "DANH_BO_MISSING", message: "Chưa có mã danh bộ." };
+        }
+        return { success: false, error_code: "TIMEOUT", message: "Máy chủ phản hồi quá lâu." };
+      },
+    },
+    { danhBoFlow },
+  );
+
+  await dispatcher.handleSignal({
+    kind: "tool-call-requested",
+    responseId: "resp_sys_err",
+    callId: "call_sys_err",
+    name: "get_bill",
+    arguments: "{}",
+  });
+  await dispatcher.handleSignal({ kind: "response-ended", responseId: "resp_sys_err", status: "completed" });
+  assert.equal(startCalls.length, 1, "lan dau van phai qua danhBoFlow.start() nhu binh thuong (DANH_BO_MISSING)");
+
+  await dispatcher.handleDanhBoFlowDone({ ok: true, danhBo: "22023251775" });
+
+  assert.equal(callCount, 2, "phai co dung 1 lan goi lai tool (lan 2), khong duoc thu them");
+  assert.equal(startCalls.length, 1, "loi HE THONG KHONG duoc goi them danhBoFlow.start() - khong moi doc lai");
+  assert.equal(sayCalls.length, 2, "2 say(): 1 preamble tra cuu (guided) + 1 xin loi/chuyen may (verbatim) - KHONG co say() thu 3 nao khac");
+  assert.deepEqual(sayCalls[1], {
+    mode: "verbatim",
+    text: "Dạ, em xin lỗi, hệ thống đang gặp sự cố nên chưa tra cứu được thông tin của Quý Khách. Để em chuyển máy cho nhân viên hỗ trợ giúp mình nhé.",
+    toolChoice: "none",
+  });
+});
+
+test("[Giai doan 6a #7] tra cuu lai that bai LOI DU LIEU (vd CUSTOMER_NOT_FOUND) -> CODE tu moi khach doc lai (danhBoFlow.start() them 1 lan) kem preamble guided", async () => {
+  const startCalls = [];
+  const danhBoFlow = { start: (reason, nowMs) => startCalls.push({ reason, nowMs }) };
+  let callCount = 0;
+  const { dispatcher, sayCalls } = makeFakes(
+    {
+      get_bill: async () => {
+        callCount += 1;
+        if (callCount === 1) {
+          return { success: false, error_code: "DANH_BO_MISSING", message: "Chưa có mã danh bộ." };
+        }
+        return { success: false, error_code: "CUSTOMER_NOT_FOUND", message: "Không tìm thấy khách hàng." };
+      },
+    },
+    { danhBoFlow, now: () => 999 },
+  );
+
+  await dispatcher.handleSignal({
+    kind: "tool-call-requested",
+    responseId: "resp_data_err",
+    callId: "call_data_err",
+    name: "get_bill",
+    arguments: '{"ma_danh_bo":"22023251775","ky":8,"nam":2026}',
+  });
+  await dispatcher.handleSignal({ kind: "response-ended", responseId: "resp_data_err", status: "completed" });
+
+  await dispatcher.handleDanhBoFlowDone({ ok: true, danhBo: "22023251775" });
+
+  assert.equal(callCount, 2, "phai co dung 1 lan goi lai tool that bai");
+  assert.equal(startCalls.length, 2, "loi DU LIEU phai goi THEM 1 lan danhBoFlow.start() de moi khach doc lai");
+  assert.equal(startCalls[1].reason, "DANH_BO_LOOKUP_FAILED");
+  assert.equal(startCalls[1].nowMs, 999, "phai dung nowMs tu tham so now(), khong tu goi Date.now()");
+  assert.equal(sayCalls.length, 2, "2 say(): 1 preamble tra cuu + 1 preamble moi doc lai (guided) - KHONG say() xin loi/chuyen may vi con luot thu");
+  assert.equal(sayCalls[1].mode, "guided");
+  assert.equal(sayCalls[1].toolChoice, "none", "preamble moi doc lai cung phai chan model tu goi tool khac");
+  assert.match(sayCalls[1].instructions, /nghe nhầm|đọc lại/, "preamble phai ngu y co the nghe nham, moi doc lai - khong do loi cho khach");
+
+  // Khach doc lai xong, danhBoFlow bao thanh cong LAN 2 -> handleDanhBoFlowDone
+  // phai tu goi LAI DUNG tool/rawArgs GOC (khong doi), dung pendingDanhBoRetry
+  // moi vua ghi lai o lan loi du lieu tren.
+  await dispatcher.handleDanhBoFlowDone({ ok: true, danhBo: "22023251775" });
+  assert.equal(callCount, 3, "phai goi lai tool 1 lan nua (lan 3) sau khi khach doc lai xong");
+});
+
+test("[Giai doan 6a #7] tra cuu lai LOI DU LIEU that bai LIEN TIEP qua MAX_DANH_BO_LOOKUP_RETRIES (2) lan -> lan thu 3 xin loi + chuyen may, KHONG moi doc lai nua", async () => {
+  const startCalls = [];
+  const danhBoFlow = { start: (reason, nowMs) => startCalls.push({ reason, nowMs }) };
+  let callCount = 0;
+  const { dispatcher, sayCalls } = makeFakes(
+    {
+      get_bill: async () => {
+        callCount += 1;
+        if (callCount === 1) {
+          return { success: false, error_code: "DANH_BO_MISSING", message: "Chưa có mã danh bộ." };
+        }
+        return { success: false, error_code: "CUSTOMER_NOT_FOUND", message: "Không tìm thấy khách hàng." };
+      },
+    },
+    { danhBoFlow },
+  );
+
+  await dispatcher.handleSignal({
+    kind: "tool-call-requested",
+    responseId: "resp_exhaust",
+    callId: "call_exhaust",
+    name: "get_bill",
+    arguments: "{}",
+  });
+  await dispatcher.handleSignal({ kind: "response-ended", responseId: "resp_exhaust", status: "completed" });
+
+  await dispatcher.handleDanhBoFlowDone({ ok: true, danhBo: "22023251775" }); // that bai lan 1 -> moi doc lai (retry 1/2)
+  await dispatcher.handleDanhBoFlowDone({ ok: true, danhBo: "22023251775" }); // that bai lan 2 -> moi doc lai (retry 2/2)
+  await dispatcher.handleDanhBoFlowDone({ ok: true, danhBo: "22023251775" }); // that bai lan 3 -> HET luot, phai chuyen may
+
+  assert.equal(callCount, 4, "tong 4 lan goi tool: 1 lan dau (DANH_BO_MISSING) + 3 lan tra cuu lai (2 that bai duoc moi doc lai, lan 3 het luot)");
+  assert.equal(startCalls.length, 3, "danhBoFlow.start() dung 3 lan: 1 DANH_BO_MISSING ban dau + 2 lan moi doc lai vi loi du lieu");
+
+  const lastSay = sayCalls[sayCalls.length - 1];
+  assert.deepEqual(lastSay, {
+    mode: "verbatim",
+    text: "Dạ, em xin lỗi, em vẫn chưa tìm thấy thông tin khớp với mã danh bộ Quý Khách vừa cung cấp. Để em chuyển máy cho nhân viên hỗ trợ kiểm tra giúp mình nhé.",
+    toolChoice: "none",
+  });
+});
+
+test("[Giai doan 6a #7] LOI DU LIEU nhung KHONG co danhBoFlow -> khong crash, xin loi + chuyen may NGAY (khong the tu moi doc lai neu khong co danhBoFlow)", async () => {
+  let callCount = 0;
+  const { dispatcher, sayCalls } = makeFakes({
+    get_bill: async () => {
+      callCount += 1;
+      // Khong co danhBoFlow -> nhanh DANH_BO_MISSING cu se roi ve say() binh
+      // thuong (khong co pendingDanhBoRetry) - de test THANG vao nhanh loi du
+      // lieu, goi handleDanhBoFlowDone() truc tiep sau khi tu "gia lap" 1
+      // pendingDanhBoRetry KHONG the (module khong lo API do) - vi vay test
+      // nay dung duong khac: xac nhan hanh vi KHONG crash khi thieu danhBoFlow
+      // hoan toan (phong thu), qua 1 chu ky DANH_BO_MISSING that.
+      if (callCount === 1) {
+        return { success: false, error_code: "DANH_BO_MISSING", message: "Chưa có mã danh bộ." };
+      }
+      return { success: false, error_code: "CUSTOMER_NOT_FOUND", message: "Không tìm thấy khách hàng." };
+    },
+  });
+
+  await dispatcher.handleSignal({
+    kind: "tool-call-requested",
+    responseId: "resp_no_flow_data_err",
+    callId: "call_no_flow_data_err",
+    name: "get_bill",
+    arguments: "{}",
+  });
+  await dispatcher.handleSignal({ kind: "response-ended", responseId: "resp_no_flow_data_err", status: "completed" });
+  assert.equal(sayCalls.length, 1, "khong co danhBoFlow -> DANH_BO_MISSING roi ve say() mode auto nhu cu, KHONG co pendingDanhBoRetry");
+
+  // Khong co pendingDanhBoRetry (nhanh DANH_BO_MISSING cu khong ghi no lai khi
+  // thieu danhBoFlow) nen handleDanhBoFlowDone() se roi vao nhanh phong thu co
+  // san (khong pendingCall) - xac nhan KHONG throw, dung tinh dung dan chung
+  // cua nhanh phong thu do (khong lien quan truc tiep toi nhanh #7 nhung cung
+  // xac nhan sy an toan khi thieu danhBoFlow o ca 2 nhanh).
+  await assert.doesNotReject(() => dispatcher.handleDanhBoFlowDone({ ok: true, danhBo: "22023251775" }));
+  assert.equal(callCount, 1, "khong duoc goi them tool nao khi khong co pendingDanhBoRetry");
+});
+
+test("[Giai doan 6a #7] loi DU LIEU thieu han truong error_code (vd loi khong ro tu backend) -> van coi la loi DU LIEU (moi doc lai), khong bi nham thanh loi he thong", async () => {
+  const startCalls = [];
+  const danhBoFlow = { start: (reason, nowMs) => startCalls.push({ reason, nowMs }) };
+  let callCount = 0;
+  const { dispatcher, sayCalls } = makeFakes(
+    {
+      get_bill: async () => {
+        callCount += 1;
+        if (callCount === 1) {
+          return { success: false, error_code: "DANH_BO_MISSING", message: "Chưa có mã danh bộ." };
+        }
+        return { success: false, message: "Không có dữ liệu so sánh." }; // giong dung handleCompareUsage that bai (khong co error_code)
+      },
+    },
+    { danhBoFlow },
+  );
+
+  await dispatcher.handleSignal({
+    kind: "tool-call-requested",
+    responseId: "resp_no_code",
+    callId: "call_no_code",
+    name: "get_bill",
+    arguments: "{}",
+  });
+  await dispatcher.handleSignal({ kind: "response-ended", responseId: "resp_no_code", status: "completed" });
+
+  await dispatcher.handleDanhBoFlowDone({ ok: true, danhBo: "22023251775" });
+
+  assert.equal(startCalls.length, 2, "thieu error_code van phai roi vao nhanh loi DU LIEU (moi doc lai), khong phai nhanh loi he thong");
+  assert.equal(sayCalls[1].mode, "guided", "phai la preamble moi doc lai, KHONG phai cau xin loi/chuyen may");
+});
+
 test("runTool() dung doc lap (khong can send/turnController gia) - tien ich khi debug rieng 1 tool", async () => {
   const { dispatcher } = makeFakes({ get_bill: async (args) => ({ success: true, echo: args }) });
 

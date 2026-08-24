@@ -199,6 +199,51 @@
 const RETRY_PREAMBLE_INSTRUCTIONS =
   "Nói thật ngắn gọn, tự nhiên rằng bạn đã có mã danh bộ và sẽ tra cứu ngay giúp khách, không nói gì thêm.";
 
+// [them 24/08/2026 #7, thiet ke da xac nhan voi chu du an 24/08/2026 - "khach
+// XAC NHAN DUNG ma danh bo (danhBoFlow phase 'done') nhung LAN GOI LAI tool o
+// handleDanhBoFlowDone() (runTool() ben duoi) VAN THAT BAI"] Khoang trong thiet
+// ke chua tung duoc xu ly truoc ban fix nay - code cu chi co 3 nhanh
+// (doc_cho_khach/output.message/fallback guided), CA 3 deu NGAM DINH lan goi
+// lai LUON thanh cong (chi khac cach doc KET QUA THANH CONG, khong nhanh nao
+// hoi "neu that bai thi sao"). Phat hien qua 1 checkpoint chay giua chung (xem
+// docs/fix/giai_doan_6a_audit_kich_ban_da_test_20260824.md, muc "Phat hien
+// phu"), KHONG doan - da doc lai src/domain/billing.js VA
+// src/integrations/tongdai-api.js (dong 60-155) de xac dinh CHINH XAC taxonomy
+// error_code THAT truoc khi thiet ke:
+//   - callApi() (tongdai-api.js) CHI TU TAO ra dung 3 ma loi HE THONG/MANG:
+//     TIMEOUT (AbortError do request qua han), CONNECTION_ERROR (loi fetch/
+//     mang khac), INVALID_RESPONSE (JSON parse hong). Doc lai KHONG giup gi -
+//     ban chat la mang/server dang loi, khong lien quan so khach vua doc.
+//   - MOI error_code KHAC (vd CUSTOMER_NOT_FOUND/INVOICE_NOT_FOUND/
+//     PRODUCTION_NOT_FOUND) la PASS-THROUGH NGUYEN VAN tu backend that
+//     (billing.js#fetchBilling khong sua doi) - dai dien loi DU LIEU (vd danh
+//     bo khong khop ho so nao), CO THE do khach doc nham hoac STT nghe nham
+//     (xem bang chung STT nghe nham tap am that o docs/fix/giai_doan_6a_audit_
+//     ..._20260824.md muc "Cap nhat 24/08/2026 #2").
+//
+// QUYET DINH THIET KE (roleplay CSKH + goc nhin khach hang cung chu du an, 2
+// cau hoi rieng bang AskUserQuestion - xem lich su hoi thoai 24/08/2026):
+//   - LOI HE THONG (LOOKUP_SYSTEM_ERROR_CODES duoi day): xin loi + de nghi
+//     chuyen may NGAY, KHONG tu mong khach doc lai - doc lai vo ich (loi
+//     khong lien quan dung/sai so).
+//   - LOI DU LIEU (moi ma con lai, ke ca thieu error_code): CODE tu dong moi
+//     khach doc LAI (danhBoFlow.start() lai tu dau, KHONG de model tu quyet
+//     dinh phai noi gi) toi da MAX_DANH_BO_LOOKUP_RETRIES lan, co 1 preamble
+//     ngan (guided, ngu y co the da NGHE NHAM - KHONG do loi cho khach) TRUOC
+//     khi danhBoFlow.start() tu noi ASK_PROMPT cua no. Het luot -> xin loi +
+//     chuyen may giong het nhanh loi he thong (khong lap lai van xin loi rieng).
+const LOOKUP_SYSTEM_ERROR_CODES = new Set(["TIMEOUT", "CONNECTION_ERROR", "INVALID_RESPONSE"]);
+const MAX_DANH_BO_LOOKUP_RETRIES = 2;
+
+const LOOKUP_SYSTEM_ERROR_TEXT =
+  "Dạ, em xin lỗi, hệ thống đang gặp sự cố nên chưa tra cứu được thông tin của Quý Khách. Để em chuyển máy cho nhân viên hỗ trợ giúp mình nhé.";
+
+const LOOKUP_DATA_ERROR_PREAMBLE_INSTRUCTIONS =
+  "Xin lỗi khách thật ngắn gọn vì có thể đã nghe nhầm mã danh bộ, nói sẽ mời khách đọc lại giúp, không nói gì thêm khác.";
+
+const LOOKUP_RETRY_EXHAUSTED_TEXT =
+  "Dạ, em xin lỗi, em vẫn chưa tìm thấy thông tin khớp với mã danh bộ Quý Khách vừa cung cấp. Để em chuyển máy cho nhân viên hỗ trợ kiểm tra giúp mình nhé.";
+
 export function createToolDispatcher({
   send,
   turnController,
@@ -220,6 +265,14 @@ export function createToolDispatcher({
   // (start() bi bo qua neu dang arming/asking/confirming) - khop dung
   // "1 dispatcher = toi da 1 danhBoFlow dang cho retry" tai 1 thoi diem.
   let pendingDanhBoRetry = null;
+
+  // [them 24/08/2026 #7] Dem so lan da tu dong moi khach doc LAI ma danh bo vi
+  // LAN GOI LAI tool (sau khi xac nhan xong) that bai voi loi DU LIEU (xem
+  // ghi chu dau file). Reset ve 0 moi khi 1 chu ky THU THAP MOI thuc su bat
+  // dau (trong sayForOutput(), nhanh DANH_BO_MISSING) - KHONG reset o day khi
+  // danhBoFlow.start() duoc goi lai TU handleDanhBoFlowDone() (nhanh loi du
+  // lieu duoi day), de con dem dung so lan LIEN TIEP trong CUNG 1 chu ky.
+  let danhBoLookupRetryCount = 0;
 
   function getPendingEntry(responseId) {
     let entry = pending.get(responseId);
@@ -252,6 +305,7 @@ export function createToolDispatcher({
           'dispatch-tool-call: tool tra ve DANH_BO_MISSING - CODE chu dong hoi lai danh bo qua danhBoFlow.start(), KHONG de model tu noi',
         );
         pendingDanhBoRetry = callCtx?.name ? { name: callCtx.name, rawArgs: callCtx.rawArgs } : null;
+        danhBoLookupRetryCount = 0; // [them 24/08/2026 #7] chu ky thu thap MOI - reset dem loi tra cuu cua chu ky truoc (neu co)
         if (!pendingDanhBoRetry) {
           log(
             "warn",
@@ -434,6 +488,42 @@ export function createToolDispatcher({
       turnController.say({ mode: "verbatim", text: output.doc_cho_khach, toolChoice: "none" });
       return;
     }
+
+    // [them 24/08/2026 #7] Xem QUYET DINH THIET KE + taxonomy error_code o
+    // dau file. PHAI kiem tra TRUOC nhanh output.message duoi day - ca output
+    // THANH CONG (billing.js#handleGetBill) lan THAT BAI (billing.js#fetchBilling
+    // tra ve qua handleGetBill) deu co truong `message`, nen chi dung "co
+    // message hay khong" se KHONG phan biet duoc 2 truong hop nay.
+    if (output?.success === false) {
+      if (LOOKUP_SYSTEM_ERROR_CODES.has(output.error_code)) {
+        log(
+          "warn",
+          `dispatch-tool-call: tra cuu lai "${name}" that bai LOI HE THONG (error_code=${output.error_code}) - xin loi + chuyen may ngay, KHONG moi doc lai (doc lai vo ich, khong lien quan dung/sai so)`,
+        );
+        turnController.say({ mode: "verbatim", text: LOOKUP_SYSTEM_ERROR_TEXT, toolChoice: "none" });
+        return;
+      }
+
+      danhBoLookupRetryCount += 1;
+      if (!danhBoFlow || danhBoLookupRetryCount > MAX_DANH_BO_LOOKUP_RETRIES) {
+        log(
+          "warn",
+          `dispatch-tool-call: tra cuu lai "${name}" that bai LOI DU LIEU (error_code=${output.error_code ?? "khong ro"}) va da het luot moi doc lai (${danhBoLookupRetryCount}/${MAX_DANH_BO_LOOKUP_RETRIES}${danhBoFlow ? "" : ", khong co danhBoFlow"}) - xin loi + chuyen may`,
+        );
+        turnController.say({ mode: "verbatim", text: LOOKUP_RETRY_EXHAUSTED_TEXT, toolChoice: "none" });
+        return;
+      }
+
+      log(
+        "info",
+        `dispatch-tool-call: tra cuu lai "${name}" that bai LOI DU LIEU (error_code=${output.error_code ?? "khong ro"}) - CODE tu moi khach doc lai ma danh bo (lan ${danhBoLookupRetryCount}/${MAX_DANH_BO_LOOKUP_RETRIES})`,
+      );
+      pendingDanhBoRetry = { name, rawArgs };
+      turnController.say({ mode: "guided", instructions: LOOKUP_DATA_ERROR_PREAMBLE_INSTRUCTIONS, toolChoice: "none" });
+      danhBoFlow.start("DANH_BO_LOOKUP_FAILED", now());
+      return;
+    }
+
     if (output?.message) {
       // Doc DUNG nguyen van output.message (verbatim) - KHONG de model tu
       // dien dat lai, xem "QUYET DINH THIET KE" dau file (docTienVN/so
