@@ -25,7 +25,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createToolDispatcher } from "../src/call-flow/dispatch-tool-call.js";
 
-function makeFakes(handlers) {
+function makeFakes(handlers, extra = {}) {
   const sent = [];
   const sayCalls = [];
   const logCalls = [];
@@ -34,6 +34,7 @@ function makeFakes(handlers) {
     turnController: { say: (opts) => sayCalls.push(opts) },
     log: (level, msg) => logCalls.push({ level, msg }),
     handlers,
+    ...extra,
   });
   return { dispatcher, sent, sayCalls, logCalls };
 }
@@ -455,6 +456,261 @@ test("[fix 23/08/2026 #2] 2 response khac nhau, 1 cai response-ended toi som (tr
 
   const outputs = sent.map((s) => JSON.parse(s.item.output).message);
   assert.deepEqual(outputs.sort(), ["ket qua cho cham", "ket qua cho nhanh"], "output dung khop voi tung response, khong bi tron lan");
+});
+
+// ─── [them 24/08/2026, Giai doan 6a] DANH_BO_MISSING -> danhBoFlow.start() ──
+// Xem ghi chu dau src/call-flow/dispatch-tool-call.js (2 tham so factory moi
+// danhBoFlow/now) va src/domain/resolve-danh-bo-ref.js (nguon that su tao ra
+// output.error_code === "DANH_BO_MISSING").
+
+test("[Giai doan 6a] tool tra ve error_code DANH_BO_MISSING, CO danhBoFlow -> goi danhBoFlow.start() thay vi turnController.say(), dung nowMs tu tham so now()", async () => {
+  const startCalls = [];
+  const danhBoFlow = { start: (reason, nowMs) => startCalls.push({ reason, nowMs }) };
+  const { dispatcher, sayCalls } = makeFakes(
+    { get_bill: async () => ({ success: false, error_code: "DANH_BO_MISSING", message: "Chưa có mã danh bộ." }) },
+    { danhBoFlow, now: () => 123456 },
+  );
+
+  await dispatcher.handleSignal({
+    kind: "tool-call-requested",
+    responseId: "resp_missing",
+    callId: "call_missing",
+    name: "get_bill",
+    arguments: "{}",
+  });
+  await dispatcher.handleSignal({ kind: "response-ended", responseId: "resp_missing", status: "completed" });
+
+  assert.equal(sayCalls.length, 0, "KHONG duoc goi turnController.say() binh thuong khi da co danhBoFlow xu ly");
+  assert.equal(startCalls.length, 1, "danhBoFlow.start() phai duoc goi dung 1 lan");
+  assert.equal(startCalls[0].reason, "DANH_BO_MISSING");
+  assert.equal(startCalls[0].nowMs, 123456, "phai dung gia tri tra ve boi tham so now(), khong tu goi Date.now()");
+});
+
+test("[Giai doan 6a] tool tra ve DANH_BO_MISSING nhung KHONG truyen danhBoFlow -> giu hanh vi cu, say() mode auto (tuong thich nguoc voi cac checkpoint/test chua can toi)", async () => {
+  const { dispatcher, sayCalls } = makeFakes({
+    get_bill: async () => ({ success: false, error_code: "DANH_BO_MISSING", message: "Chưa có mã danh bộ." }),
+  });
+
+  await dispatcher.handleSignal({
+    kind: "tool-call-requested",
+    responseId: "resp_missing_no_flow",
+    callId: "call_missing_no_flow",
+    name: "get_bill",
+    arguments: "{}",
+  });
+  await dispatcher.handleSignal({ kind: "response-ended", responseId: "resp_missing_no_flow", status: "completed" });
+
+  assert.equal(sayCalls.length, 1, "khong co danhBoFlow -> roi ve say() binh thuong nhu truoc ban them Giai doan 6a nay");
+  assert.deepEqual(sayCalls[0], undefined, "say() mode auto (khong tham so), giong het hanh vi khong co action/doc_cho_khach");
+});
+
+test("[Giai doan 6a] output KHAC (khong phai DANH_BO_MISSING) du CO danhBoFlow -> KHONG dung toi danhBoFlow, van say() binh thuong", async () => {
+  const startCalls = [];
+  const danhBoFlow = { start: (reason, nowMs) => startCalls.push({ reason, nowMs }) };
+  const { dispatcher, sayCalls } = makeFakes(
+    { get_bill: async () => ({ success: true, message: "Kỳ 8: 200.000đ" }) },
+    { danhBoFlow },
+  );
+
+  await dispatcher.handleSignal({
+    kind: "tool-call-requested",
+    responseId: "resp_unrelated",
+    callId: "call_unrelated",
+    name: "get_bill",
+    arguments: "{}",
+  });
+  await dispatcher.handleSignal({ kind: "response-ended", responseId: "resp_unrelated", status: "completed" });
+
+  assert.equal(startCalls.length, 0, "danhBoFlow.start() KHONG duoc goi khi output khong phai DANH_BO_MISSING");
+  assert.equal(sayCalls.length, 1, "output binh thuong van phai say() nhu cu");
+});
+
+test("[Giai doan 6a] TOOL_NOT_FOUND/HANDLER_ERROR (loi khac, KHONG phai DANH_BO_MISSING) du co danhBoFlow -> khong dung toi danhBoFlow", async () => {
+  const startCalls = [];
+  const danhBoFlow = { start: (reason, nowMs) => startCalls.push({ reason, nowMs }) };
+  const { dispatcher, sayCalls } = makeFakes({}, { danhBoFlow });
+
+  await dispatcher.handleSignal({
+    kind: "tool-call-requested",
+    responseId: "resp_not_found",
+    callId: "call_not_found",
+    name: "khong_ton_tai",
+    arguments: "{}",
+  });
+  await dispatcher.handleSignal({ kind: "response-ended", responseId: "resp_not_found", status: "completed" });
+
+  assert.equal(startCalls.length, 0, "TOOL_NOT_FOUND khac han DANH_BO_MISSING, khong duoc kich danhBoFlow");
+  assert.equal(sayCalls.length, 1);
+});
+
+// ─── [them 24/08/2026 #2, Giai doan 6a] handleDanhBoFlowDone() - "sau khi ──
+// khach xac nhan xong thi sao?" (xem QUYET DINH THIET KE dau src/call-flow/
+// dispatch-tool-call.js): CODE tu goi LAI dung tool/rawArgs GOC (khong de
+// model tu nho lai), co 1 preamble ngan (mode guided) truoc khi goi lai, roi
+// doc verbatim output.message cua ket qua that.
+
+test("[Giai doan 6a #2] DANH_BO_MISSING -> danhBoFlow.start() -> danhBoFlow bao thanh cong (handleDanhBoFlowDone ok:true) " +
+  "-> tu goi LAI DUNG tool/rawArgs GOC (danh bo GIO da duoc biet), noi preamble (guided) TRUOC, roi doc verbatim output.message", async () => {
+  const calls = [];
+  // Mo phong callState.danhBo that: LUC DAU thieu (handler tra ve
+  // DANH_BO_MISSING dung 1 lan), SAU khi danhBoFlow "xac nhan xong" thi co
+  // (handler tra ve thanh cong) - giong dung cach resolveDanhBoRef that hoat
+  // dong (xem src/domain/resolve-danh-bo-ref.js).
+  let danhBoKnown = false;
+  const danhBoFlow = { start: () => {} };
+  const { dispatcher, sayCalls } = makeFakes(
+    {
+      get_bill: async (args) => {
+        calls.push(args);
+        if (!danhBoKnown) {
+          return { success: false, error_code: "DANH_BO_MISSING", message: "Chưa có mã danh bộ, Quý Khách đọc giúp em ạ." };
+        }
+        return { success: true, message: `Kỳ ${args.ky}/${args.nam}: đã có dữ liệu.` };
+      },
+    },
+    { danhBoFlow },
+  );
+
+  await dispatcher.handleSignal({
+    kind: "tool-call-requested",
+    responseId: "resp_retry",
+    callId: "call_retry",
+    name: "get_bill",
+    arguments: '{"ma_danh_bo":"22023251775","ky":8,"nam":2026}',
+  });
+  // sayForOutput() (noi ghi nho pendingDanhBoRetry) chi chay SAU response-
+  // ended cua CHINH response nay (xem fix 22/08/2026 dau file) - phai gui
+  // tin hieu nay thi DANH_BO_MISSING moi thuc su duoc xu ly.
+  await dispatcher.handleSignal({ kind: "response-ended", responseId: "resp_retry", status: "completed" });
+
+  assert.equal(calls.length, 1, "lan dau phai goi handler, tra ve DANH_BO_MISSING (dung callCtx da ghi nho vao pendingDanhBoRetry)");
+  assert.equal(sayCalls.length, 0, "DANH_BO_MISSING -> giao het cho danhBoFlow.start() (fake stub o day khong tu say gi), KHONG say() o dispatch-tool-call.js");
+
+  danhBoKnown = true; // mo phong danhBoFlow da xac nhan xong, callState.danhBo GIO da co
+  await dispatcher.handleDanhBoFlowDone({ ok: true, danhBo: "22023251775" });
+
+  assert.equal(calls.length, 2, "phai goi LAI DUNG 1 lan nua tool goc, tong 2 lan");
+  assert.deepEqual(calls[1], { ma_danh_bo: "22023251775", ky: 8, nam: 2026 }, "lan goi lai phai dung DUNG rawArgs GOC, khong doi/thieu tham so nao");
+
+  assert.equal(sayCalls.length, 2, "2 say(): 1 preamble (guided) + 1 doc ket qua that (verbatim)");
+  assert.equal(sayCalls[0].mode, "guided", "preamble truoc, KHONG lo du lieu nhay cam nen cho phep model tu bien tau");
+  assert.deepEqual(sayCalls[1], { mode: "verbatim", text: "Kỳ 8/2026: đã có dữ liệu." }, "ket qua THAT phai doc verbatim, khong de model tu dien dat lai");
+});
+
+test("[Giai doan 6a #2] handleDanhBoFlowDone() noi preamble (mode:guided) TRUOC khi runTool() xong, khong doi tool tra ve moi noi", async () => {
+  let resolveHandler;
+  const handlerPromise = new Promise((resolve) => {
+    resolveHandler = resolve;
+  });
+  let callCount = 0;
+  const danhBoFlow = { start: () => {} };
+  const { dispatcher, sayCalls } = makeFakes(
+    {
+      get_bill: async () => {
+        callCount += 1;
+        if (callCount === 1) {
+          // Lan dau (qua handleSignal duoi day) phai tra ve NGAY DANH_BO_MISSING
+          // de ghi nho pendingDanhBoRetry - chi lan GOI LAI (thu 2, qua
+          // handleDanhBoFlowDone) moi thuc su "treo" cho handlerPromise.
+          return { success: false, error_code: "DANH_BO_MISSING", message: "Chưa có mã danh bộ." };
+        }
+        await handlerPromise;
+        return { success: true, message: "kết quả sau khi chờ" };
+      },
+    },
+    { danhBoFlow },
+  );
+
+  await dispatcher.handleSignal({
+    kind: "tool-call-requested",
+    responseId: "resp_preamble",
+    callId: "call_preamble",
+    name: "get_bill",
+    arguments: "{}",
+  });
+  await dispatcher.handleSignal({ kind: "response-ended", responseId: "resp_preamble", status: "completed" });
+
+  const donePromise = dispatcher.handleDanhBoFlowDone({ ok: true, danhBo: "22023251775" });
+
+  // Preamble phai duoc say() NGAY, TRUOC ca khi runTool() (dang treo) xong.
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.equal(sayCalls.length, 1, "preamble phai duoc noi NGAY, khong doi tool goi lai xong");
+  assert.equal(sayCalls[0].mode, "guided");
+  assert.ok(sayCalls[0].instructions.length > 0);
+
+  resolveHandler();
+  await donePromise;
+  assert.equal(sayCalls.length, 2, "sau khi tool goi lai xong, phai co them 1 say() verbatim doc ket qua");
+  assert.deepEqual(sayCalls[1], { mode: "verbatim", text: "kết quả sau khi chờ" });
+});
+
+test("[Giai doan 6a #2] danhBoFlow bao THAT BAI (ok:false) -> KHONG goi lai tool, KHONG say() them gi (giveUp() cua danh-bo-flow.js da tu xin loi roi)", async () => {
+  const toolCalls = [];
+  const danhBoFlow = { start: () => {} };
+  const { dispatcher, sayCalls } = makeFakes(
+    {
+      get_bill: async (args) => {
+        toolCalls.push(args);
+        return { success: false, error_code: "DANH_BO_MISSING", message: "Chưa có mã danh bộ." };
+      },
+    },
+    { danhBoFlow },
+  );
+
+  await dispatcher.handleSignal({
+    kind: "tool-call-requested",
+    responseId: "resp_giveup",
+    callId: "call_giveup",
+    name: "get_bill",
+    arguments: "{}",
+  });
+  assert.equal(toolCalls.length, 1);
+  const sayCountAfterMissing = sayCalls.length;
+
+  await dispatcher.handleDanhBoFlowDone({ ok: false, reason: "qua so lan khach bao sai" });
+
+  assert.equal(toolCalls.length, 1, "khong duoc goi LAI tool khi danhBoFlow that bai (van dung 1 lan tu truoc)");
+  assert.equal(sayCalls.length, sayCountAfterMissing, "khong duoc them say() nao - giveUp() da tu xin loi trong danh-bo-flow.js roi");
+});
+
+test("[Giai doan 6a #2] handleDanhBoFlowDone(ok:true) nhung KHONG co pendingDanhBoRetry (chua tung co DANH_BO_MISSING nao) -> khong crash, khong goi tool nao, khong say() gi (phong thu)", async () => {
+  const danhBoFlow = { start: () => {} };
+  const { dispatcher, sayCalls } = makeFakes({ get_bill: async () => ({ success: true }) }, { danhBoFlow });
+
+  await assert.doesNotReject(() => dispatcher.handleDanhBoFlowDone({ ok: true, danhBo: "22023251775" }));
+  assert.equal(sayCalls.length, 0);
+});
+
+test("[Giai doan 6a #2] handleDanhBoFlowDone() ket qua tra ve THIEU output.message -> phong thu, van say() (mode guided) thay vi im lang", async () => {
+  let callCount = 0;
+  const danhBoFlow = { start: () => {} };
+  const { dispatcher, sayCalls } = makeFakes(
+    {
+      get_bill: async () => {
+        callCount += 1;
+        if (callCount === 1) {
+          return { success: false, error_code: "DANH_BO_MISSING", message: "Chưa có mã danh bộ." };
+        }
+        return { success: true, data: [{ tong_tien: 1 }] }; // co y KHONG co truong message
+      },
+    },
+    { danhBoFlow },
+  );
+
+  await dispatcher.handleSignal({
+    kind: "tool-call-requested",
+    responseId: "resp_no_message",
+    callId: "call_no_message",
+    name: "get_bill",
+    arguments: "{}",
+  });
+  await dispatcher.handleSignal({ kind: "response-ended", responseId: "resp_no_message", status: "completed" });
+
+  await dispatcher.handleDanhBoFlowDone({ ok: true, danhBo: "22023251775" });
+
+  const lastSay = sayCalls[sayCalls.length - 1];
+  assert.equal(lastSay.mode, "guided", "thieu message -> fallback guided doc tu output tho, khong duoc im lang");
 });
 
 test("runTool() dung doc lap (khong can send/turnController gia) - tien ich khi debug rieng 1 tool", async () => {

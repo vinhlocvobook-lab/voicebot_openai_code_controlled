@@ -104,11 +104,97 @@
 //     response-ended toi moi say() (y het hanh vi cu).
 // Bat ke thu tu, say() LUON duoc goi dung 1 lan khi CA HAI dieu kien (tool
 // xong + response ket thuc) da xay ra - khong con phu thuoc ai toi truoc.
-export function createToolDispatcher({ send, turnController, log = () => {}, handlers = {} } = {}) {
-  // responseId -> { ended, hasOutput, output } - xem ghi chu fix 23/08/2026
-  // #2 tren day. Thay Map "output don gian" cu (khong con du de chiu
-  // duoc thu tu den truoc/sau cua response-ended so voi handler xong).
+//
+// [them 24/08/2026, Giai doan 6a] 2 tham so factory MOI, CA HAI DEU
+// OPTIONAL (khong truyen -> giu nguyen 100% hanh vi cu, 20 test cu cua
+// Giai doan 5a/5b khong sua gi van phai pass):
+//   - `danhBoFlow`: object tra ve boi createDanhBoFlow() (xem src/call-
+//     flow/danh-bo-flow.js). Khi 1 tool tra ve output.error_code ===
+//     "DANH_BO_MISSING" (hop dong that cua resolveDanhBoRef/tool-router.js,
+//     xem resolve-danh-bo-ref.js) VA co danhBoFlow, sayForOutput() KHONG
+//     goi turnController.say() binh thuong nua - thay vao do goi
+//     danhBoFlow.start(...) de CODE (khong phai model) tu chu dong hoi lai
+//     danh bo bang say(mode:"verbatim") rieng cua no (xem ASK_PROMPT trong
+//     danh-bo-flow.js). Neu danhBoFlow KHONG duoc truyen (vd checkpoint cu
+//     cua Giai doan 5b chua can toi), giu nguyen hanh vi cu: roi xuong cac
+//     nhanh action/doc_cho_khach ben duoi (khong khop nhanh nao) -> say()
+//     mode auto nhu truoc, model tu xu ly loi DANH_BO_MISSING trong loi noi.
+//   - `now`: ham tra ve mocs epoch (mac dinh Date.now()) - CHI dung de
+//     truyen nowMs vao danhBoFlow.start(reason, nowMs), giu dung quy uoc
+//     "khong tu goi Date.now() ben trong module thuan" cua danh-bo-flow.js
+//     (test truyen ham gia co dinh de test tat dinh, khong flaky theo thoi
+//     gian thuc chay test).
+//
+// [them 24/08/2026 #2, Giai doan 6a - "sau khi khach xac nhan xong thi
+// sao?"] Sau khi danhBoFlow xong (thanh cong hoac bo cuoc), can 1 ham MOI
+// `handleDanhBoFlowDone(result)` - ben goi (lop tich hop that, se viet o
+// checkpoint-giai-doan-6a.mjs) tu noi vao onDone cua createDanhBoFlow():
+//     const danhBoFlow = createDanhBoFlow({
+//       ...,
+//       onDone: (result) => {
+//         if (result.ok) callState.danhBo = result.danhBo; // CALLER set,
+//           // KHONG PHAI dispatch-tool-call.js - module nay khong nam giu
+//           // callState (chi handlers moi dong qua callState, xem tool-
+//           // router.js), giu dung ranh gioi da co.
+//         setVadMode("normal"); // CALLER goi - dispatch-tool-call.js
+//           // khong nhan setVadMode lam dependency, tranh phinh to tham so
+//           // factory chi cho 1 nhanh dung 1 lan.
+//         toolDispatcher.handleDanhBoFlowDone(result);
+//       },
+//     });
+//
+// QUYET DINH THIET KE (chuyen gia CSKH + goc nhin khach hang, xem thao
+// luan day du trong hoi thoai voi chu du an 24/08/2026 - KHONG doan, dung
+// lai bang chung/quy tac da co san trong du an):
+//   - THANH CONG: CODE (khong phai model) tu goi LAI DUNG tool + rawArgs
+//     GOC da lam ra DANH_BO_MISSING ban dau (nho trong `pendingDanhBoRetry`
+//     duoi day) - KHONG de model tu nho/tu dien lai yeu cau cu. Ly do KY
+//     THUAT (khong chi trieu chuong): luot goi lai nay KHONG co function_
+//     call moi tu model (khong co call_id moi) de gan function_call_output
+//     vao - say({mode:"auto"}) se khong co gi MOI trong conversation de
+//     model thuat lai (rui ro model bia/lay du lieu cu). Vi vay dung
+//     say({mode:"verbatim", text: output.message}) - CA 4 tool bi chan boi
+//     DANH_BO_MISSING (get_bill/compare_usage/get_outages/create_ticket)
+//     deu da co san truong `message` duoc viet RIENG cho TTS (vd
+//     billing.js#docTienVN doc so tien thanh chu, tranh loi "1.180.266
+//     đồng" bi TTS doc sai tung da xac nhan that) - KHONG de model tu dien
+//     dat lai co the vo tinh doc sai dung nhung con so nay.
+//   - Co 1 cau "preamble" NGAN truoc khi goi lai (mode "guided", KHONG
+//     verbatim - khong co du lieu nhay cam nen cho phep model tu bien tau
+//     de khong nghe may moc) - dung nguyen tac muc 5 (Preambles) cua
+//     realtime-voice-prompting: nen co preamble khi viec sap lam TON THOI
+//     GIAN DANG KE - do tre mang goi tongdai-api.js that DA DO duoc
+//     ~2483ms (xem ghi chu fix 23/08/2026 #2 o tren), du de khach cam nhan
+//     duoc im lang neu khong co preamble.
+//   - THAT BAI (giveUp): KHONG noi gi them o day - danh-bo-flow.js#giveUp()
+//     (sua cung ngay 24/08/2026) DA TU say() 1 cau xin loi + de nghi
+//     chuyen may (dung nguyen tac "Tool Failures" cua realtime-voice-
+//     prompting: "offer an alternate path or escalation"), tranh noi 2 lan
+//     chong nhau (1 lan tu giveUp(), 1 lan o day).
+const RETRY_PREAMBLE_INSTRUCTIONS =
+  "Nói thật ngắn gọn, tự nhiên rằng bạn đã có mã danh bộ và sẽ tra cứu ngay giúp khách, không nói gì thêm.";
+
+export function createToolDispatcher({
+  send,
+  turnController,
+  log = () => {},
+  handlers = {},
+  danhBoFlow = null,
+  now = () => Date.now(),
+} = {}) {
+  // responseId -> { ended, hasOutput, output, name, rawArgs } - xem ghi chu
+  // fix 23/08/2026 #2 tren day. Thay Map "output don gian" cu (khong con du
+  // de chiu duoc thu tu den truoc/sau cua response-ended so voi handler
+  // xong). `name`/`rawArgs` them 24/08/2026 #2 - can nho de handleDanhBoFlowDone()
+  // biet tool/rawArgs GOC nao can goi lai sau khi danhBoFlow xong.
   const pending = new Map();
+
+  // { name, rawArgs } cua tool-call GOC da lam ra DANH_BO_MISSING gan nhat -
+  // xem ghi chu "them 24/08/2026 #2" dau file. Chi 1 slot (khong phai Map)
+  // vi danh-bo-flow.js tu no da chi cho 1 luong thu thap tai 1 thoi diem
+  // (start() bi bo qua neu dang arming/asking/confirming) - khop dung
+  // "1 dispatcher = toi da 1 danhBoFlow dang cho retry" tai 1 thoi diem.
+  let pendingDanhBoRetry = null;
 
   function getPendingEntry(responseId) {
     let entry = pending.get(responseId);
@@ -123,7 +209,38 @@ export function createToolDispatcher({ send, turnController, log = () => {}, han
   // dung chung cho ca nhanh binh thuong (cho response-ended) lan nhanh
   // phong thu (thieu responseId, goi say() ngay) de khong lech hanh vi
   // giua 2 nhanh.
-  function sayForOutput(output) {
+  //
+  // [them 24/08/2026 #2] Tham so thu 2 `callCtx` ({name, rawArgs} cua CHINH
+  // tool-call dang xu ly) - CHI dung o nhanh DANH_BO_MISSING de nho lai vao
+  // pendingDanhBoRetry (xem handleDanhBoFlowDone duoi day). Optional - cac
+  // nhanh khac (action/doc_cho_khach/auto) khong doc callCtx.
+  function sayForOutput(output, callCtx) {
+    // [them 24/08/2026, Giai doan 6a] Kiem tra TRUOC ca action/doc_cho_khach
+    // - DANH_BO_MISSING la tin hieu dac biet nhat (can CODE chiem lay
+    // luot noi, khong de model tu do dat), du thuc te resolve-danh-bo-
+    // ref.js hien khong bao gio tra dong thoi ca error_code lan action/
+    // doc_cho_khach nen thu tu nay chua tung xung dot voi 2 nhanh duoi.
+    if (output?.error_code === "DANH_BO_MISSING") {
+      if (danhBoFlow) {
+        log(
+          "info",
+          'dispatch-tool-call: tool tra ve DANH_BO_MISSING - CODE chu dong hoi lai danh bo qua danhBoFlow.start(), KHONG de model tu noi',
+        );
+        pendingDanhBoRetry = callCtx?.name ? { name: callCtx.name, rawArgs: callCtx.rawArgs } : null;
+        if (!pendingDanhBoRetry) {
+          log(
+            "warn",
+            "dispatch-tool-call: DANH_BO_MISSING nhung thieu callCtx (name/rawArgs) - handleDanhBoFlowDone() se khong biet tool nao de goi lai sau khi xac nhan xong",
+          );
+        }
+        danhBoFlow.start("DANH_BO_MISSING", now());
+        return;
+      }
+      log(
+        "warn",
+        'dispatch-tool-call: tool tra ve DANH_BO_MISSING nhung KHONG co danhBoFlow duoc truyen vao createToolDispatcher() - giu hanh vi cu (say() de model tu xu ly)',
+      );
+    }
     if (output?.action === "no_reply") {
       log("info", 'dispatch-tool-call: tool tra ve action:"no_reply" - KHONG goi say(), de model im lang cho khach noi tiep');
       return;
@@ -202,10 +319,12 @@ export function createToolDispatcher({ send, turnController, log = () => {}, han
             "info",
             `dispatch-tool-call: response ${responseId} da ket thuc TRUOC khi tool xong (do tre mang) - goi say() ngay`,
           );
-          sayForOutput(output);
+          sayForOutput(output, { name, rawArgs });
         } else {
           entry.hasOutput = true;
           entry.output = output;
+          entry.name = name;
+          entry.rawArgs = rawArgs;
           log(
             "info",
             `dispatch-tool-call: da gui function_call_output, hoan say() toi khi response ${responseId} ket thuc`,
@@ -217,7 +336,7 @@ export function createToolDispatcher({ send, turnController, log = () => {}, han
         // thi khong co gi de cho ca, goi say() ngay - van doc dung output
         // (action/doc_cho_khach) qua sayForOutput, khong lech hanh vi.
         log("warn", "dispatch-tool-call: tin hieu tool-call-requested thieu responseId, goi say() ngay (khong doi duoc)");
-        sayForOutput(output);
+        sayForOutput(output, { name, rawArgs });
       }
       return;
     }
@@ -227,7 +346,7 @@ export function createToolDispatcher({ send, turnController, log = () => {}, han
       if (!entry) return;
       if (entry.hasOutput) {
         pending.delete(signal.responseId);
-        sayForOutput(entry.output);
+        sayForOutput(entry.output, { name: entry.name, rawArgs: entry.rawArgs });
       } else {
         // Tool con dang chay (do tre mang that) - danh dau "da ket thuc",
         // de nhanh tool-call-requested (tren) tu goi say() ngay luc no xong.
@@ -236,5 +355,67 @@ export function createToolDispatcher({ send, turnController, log = () => {}, han
     }
   }
 
-  return { handleSignal, runTool };
+  // [them 24/08/2026 #2, Giai doan 6a] Xem thiet ke day du + vi du wiring o
+  // ghi chu dau file (muc "them 24/08/2026 #2"). Ben goi (lop tich hop
+  // that) goi ham nay tu onDone cua danhBoFlow SAU KHI da tu set
+  // callState.danhBo (neu ok) va setVadMode("normal") - ham nay KHONG lam 2
+  // viec do (khong nam giu callState/setVadMode, giu dung ranh gioi module).
+  async function handleDanhBoFlowDone(result) {
+    const pendingCall = pendingDanhBoRetry;
+    pendingDanhBoRetry = null;
+
+    if (!result?.ok) {
+      log(
+        "info",
+        "dispatch-tool-call: danhBoFlow ket thuc KHONG thanh cong - danh-bo-flow.js#giveUp() da tu xin loi roi, khong noi gi them o day",
+      );
+      return;
+    }
+
+    if (!pendingCall) {
+      log(
+        "warn",
+        "dispatch-tool-call: danhBoFlow thanh cong nhung KHONG co pendingDanhBoRetry - khong biet tool/rawArgs goc de tra cuu lai (kiem tra lai wiring: handleDanhBoFlowDone() chi nen duoc goi sau 1 lan DANH_BO_MISSING tu CHINH dispatcher nay)",
+      );
+      return;
+    }
+
+    const { name, rawArgs } = pendingCall;
+    log("info", `dispatch-tool-call: danh bo da xac nhan - tra cuu lai tool "${name}" voi rawArgs goc: ${rawArgs}`);
+
+    // Preamble NGAN truoc khi goi lai (mode "guided", KHONG verbatim - xem
+    // giai thich "QUYET DINH THIET KE" dau file) - che do tre mang that
+    // (~2483ms da do duoc, xem fix 23/08/2026 #2) truoc khi co ket qua that.
+    turnController.say({ mode: "guided", instructions: RETRY_PREAMBLE_INSTRUCTIONS });
+
+    const output = await runTool(name, rawArgs);
+    log("info", `dispatch-tool-call: tra cuu lai "${name}" tra ve: ${JSON.stringify(output)}`);
+
+    if (output?.action === "no_reply") {
+      log("info", 'dispatch-tool-call: tra cuu lai tra ve action:"no_reply" - khong say() ket qua');
+      return;
+    }
+    if (output?.doc_cho_khach) {
+      turnController.say({ mode: "verbatim", text: output.doc_cho_khach });
+      return;
+    }
+    if (output?.message) {
+      // Doc DUNG nguyen van output.message (verbatim) - KHONG de model tu
+      // dien dat lai, xem "QUYET DINH THIET KE" dau file (docTienVN/so
+      // tien/ngay thang da duoc code dinh dang RIENG cho TTS).
+      turnController.say({ mode: "verbatim", text: output.message });
+      return;
+    }
+    // Phong thu - ca 4 tool bi chan boi DANH_BO_MISSING (get_bill/
+    // compare_usage/get_outages/create_ticket) deu da co san output.message
+    // (xem billing.js/outages.js/tickets.js) nen nhanh nay khong nen xay ra
+    // trong thuc te - con hon im lang neu vo tinh xay ra.
+    log("warn", `dispatch-tool-call: tra cuu lai "${name}" khong co output.message - dung guided doc tu output tho`);
+    turnController.say({
+      mode: "guided",
+      instructions: `Doc ket qua sau cho khach bang loi tu nhien, day du, khong them thong tin ngoai: ${JSON.stringify(output)}`,
+    });
+  }
+
+  return { handleSignal, runTool, handleDanhBoFlowDone };
 }

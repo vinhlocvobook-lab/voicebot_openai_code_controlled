@@ -11,6 +11,13 @@ import assert from "node:assert/strict";
 import { createDanhBoFlow } from "../src/call-flow/danh-bo-flow.js";
 import { danhBoSpoken } from "../src/call-flow/danh-bo-collect.js";
 
+// [them 24/08/2026] Dung DUNG chuoi GIVE_UP_TEXT khong export tu module
+// nguon (co y, giu private) - khai bao lai o day CHINH XAC tung chu de doi
+// chieu, giong cach ASK_PROMPT/UNCLEAR_CONFIRM_INSTRUCTIONS da lam ngam qua
+// cac assert.equal(...text) ben duoi truoc do (khong co bien rieng).
+const GIVE_UP_TEXT =
+  "Dạ, em xin lỗi, em chưa xác nhận được mã danh bộ của Quý Khách. Để em chuyển máy cho nhân viên hỗ trợ giúp mình nhé.";
+
 function createHarness(opts = {}) {
   const vadModes = [];
   const sayCalls = [];
@@ -165,8 +172,9 @@ test("confirming: cau tra loi khong ro rang -> say(mode:'guided') hoi lai, KHONG
   assert.equal(sayCalls[sayCalls.length - 1].mode, "guided");
 });
 
-test("qua nguong maxAttempts (mac dinh 3) lien tiep bao SAI -> 'failed', VAD tra ve 'normal', onDone({ok:false})", () => {
-  const { flow, doneCalls, vadModes } = createHarness();
+test("qua nguong maxAttempts (mac dinh 3) lien tiep bao SAI -> 'failed', VAD tra ve 'normal', onDone({ok:false}), " +
+  "VA tu noi 1 cau xin loi + de nghi chuyen may (khong im lang ngo cut - them 24/08/2026)", () => {
+  const { flow, doneCalls, vadModes, sayCalls } = createHarness();
   armAndAsk(flow);
   flow.handleSignal({ kind: "transcript-ready", text: CANDIDATE }, 100);
 
@@ -181,10 +189,12 @@ test("qua nguong maxAttempts (mac dinh 3) lien tiep bao SAI -> 'failed', VAD tra
   assert.equal(flow.getPhase(), "failed");
   assert.deepEqual(doneCalls, [{ ok: false, reason: "qua so lan khach bao sai" }]);
   assert.deepEqual(vadModes, ["digits", "normal"], "failed PHAI tu tra VAD ve 'normal'");
+  const lastSay = sayCalls[sayCalls.length - 1];
+  assert.deepEqual(lastSay, { mode: "verbatim", text: GIVE_UP_TEXT }, "giveUp() phai tu say() 1 cau xin loi, khong im lang ngo cut");
 });
 
 test("maxAttempts tuy chinh duoc qua opts", () => {
-  const { flow, doneCalls } = createHarness({ maxAttempts: 1 });
+  const { flow, doneCalls, sayCalls } = createHarness({ maxAttempts: 1 });
   armAndAsk(flow);
   flow.handleSignal({ kind: "transcript-ready", text: CANDIDATE }, 100);
   flow.handleSignal({ kind: "transcript-ready", text: "sai rồi" }, 200); // lan 1, con trong nguong
@@ -194,6 +204,7 @@ test("maxAttempts tuy chinh duoc qua opts", () => {
 
   assert.equal(flow.getPhase(), "failed");
   assert.equal(doneCalls.length, 1);
+  assert.equal(sayCalls[sayCalls.length - 1].text, GIVE_UP_TEXT);
 });
 
 test("checkWatchdog: khong lam gi khi con trong han", () => {
@@ -204,8 +215,8 @@ test("checkWatchdog: khong lam gi khi con trong han", () => {
   assert.equal(doneCalls.length, 0);
 });
 
-test("checkWatchdog: het han -> 'failed', VAD tra ve 'normal', onDone({ok:false})", () => {
-  const { flow, doneCalls, vadModes } = createHarness({ watchdogMs: 90000 });
+test("checkWatchdog: het han -> 'failed', VAD tra ve 'normal', onDone({ok:false}), tu say() cau xin loi", () => {
+  const { flow, doneCalls, vadModes, sayCalls } = createHarness({ watchdogMs: 90000 });
   armAndAsk(flow, 0); // session-updated luc nowMs=1 -> lastActivityAtMs=1
 
   flow.checkWatchdog(90001);
@@ -215,6 +226,7 @@ test("checkWatchdog: het han -> 'failed', VAD tra ve 'normal', onDone({ok:false}
   assert.equal(doneCalls.length, 1);
   assert.equal(doneCalls[0].ok, false);
   assert.match(doneCalls[0].reason, /watchdog/);
+  assert.equal(sayCalls[sayCalls.length - 1].text, GIVE_UP_TEXT, "watchdog cung la 1 dang bo cuoc, phai qua giveUp() nen cung phai xin loi");
 });
 
 test("checkWatchdog: hoat dong (transcript-ready) RESET dong ho, khong bi tinh don tu luc start", () => {

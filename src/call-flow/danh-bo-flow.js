@@ -82,6 +82,21 @@ function buildConfirmPrompt(candidate) {
 const UNCLEAR_CONFIRM_INSTRUCTIONS =
   "Hỏi lại thật ngắn gọn xem Quý Khách xác nhận mã danh bộ vừa đọc lại là ĐÚNG hay CHƯA ĐÚNG, không hỏi gì thêm.";
 
+// [them 24/08/2026] KHAC finish() (co y de silent - xem ghi chu trong ham
+// finish() ben duoi: ben goi con viec phai lam tiep, vd goi lai tool goc),
+// giveUp() la NGO CUT THAT SU cua luong nay - khong con gi "tiep theo" nua.
+// Neu im lang hoan toan sau khi bo cuoc, khach de hieu nham cuoc goi bi
+// rot/treo may (danh bo-flow da lam VAD/say im lang suot arming/asking/
+// confirming, tu nhien im lang tiep se rat kho phan biet). Dung dung
+// nguyen tac "Tool Failures" cua realtime-voice-prompting (xem SKILL.md
+// muc 7 / references/prompting-guide.md#Phuc-hoi-sau-khi-tool-call-that-
+// bai): "If the same failure happens repeatedly, offer an alternate path
+// or escalation" - tu noi 1 cau xin loi + de nghi chuyen may, khong doi
+// model tu quyet dinh phai noi gi (dung nguyen tac CODE chu dong xuyen
+// suot ca module nay, khong rieng gi luc thu thap/xac nhan).
+const GIVE_UP_TEXT =
+  "Dạ, em xin lỗi, em chưa xác nhận được mã danh bộ của Quý Khách. Để em chuyển máy cho nhân viên hỗ trợ giúp mình nhé.";
+
 export function createDanhBoFlow({
   setVadMode,
   say,
@@ -107,6 +122,7 @@ export function createDanhBoFlow({
     log("warn", `danh-bo-flow: bo cuoc (${lyDo})`);
     phase = "failed";
     setVadMode("normal");
+    say({ mode: "verbatim", text: GIVE_UP_TEXT });
     onDone({ ok: false, reason: lyDo });
   }
 
