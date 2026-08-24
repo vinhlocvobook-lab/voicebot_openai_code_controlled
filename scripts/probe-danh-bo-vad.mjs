@@ -42,6 +42,21 @@
 //   node scripts/probe-danh-bo-vad.mjs samples/6_ngap_ngung.wav
 //   node scripts/probe-danh-bo-vad.mjs samples/2_22082351775_lienmach.wav
 //
+// [them 24/08/2026 #4, theo audit docs/fix/giai_doan_6a_audit_kich_ban_da_
+// test_20260824.md - muc "tap am luc doc so chua test"] Them tham so THU 2
+// TUY CHON: ma danh bo MONG DOI, de doi chieu TRUC TIEP voi candidate that
+// su danh-bo-collect.js (module THAT, khong phai ban sao/mo phong) gom
+// duoc tu CHINH cac manh transcript vua nhan - KHONG can chay qua toan bo
+// checkpoint-giai-doan-6a.mjs (von gan chat voi 1 ma danh bo CO du lieu
+// billing that, cac file "tap am" hien co lai doc 1 ma KHAC (22082351775)
+// CHUA xac nhan co du lieu that trong moi truong test - xem ghi chu file
+// audit) - script nay chi can biet CANDIDATE co dung khong, khong lien
+// quan gi toi viec tra cuu hoa don co thanh cong hay khong. Vi du dung cho
+// tap am (5 file, muc do tang dan noise1->noise5):
+//   node scripts/probe-danh-bo-vad.mjs samples/2_22082351775_lienmach_noise1.wav 22082351775
+//   node scripts/probe-danh-bo-vad.mjs samples/2_22082351775_lienmach_noise3.wav 22082351775
+//   node scripts/probe-danh-bo-vad.mjs samples/2_22082351775_lienmach_noise5.wav 22082351775
+//
 // KET QUA: logs/probe-danh-bo-vad-<file>-<timestamp>.jsonl (toan bo event
 // tho, dung dinh dang probe-realtime.mjs de doi chieu duoc voi log Giai
 // doan 1) + tom tat cuoi cung in ra console (xem printSummary() cuoi file).
@@ -52,6 +67,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildTurnDetectionConfig } from "../src/session/session-ws.js";
+import { createDanhBoSession, noteDanhBoDigits, isDanhBoComplete, danhBoCandidate } from "../src/call-flow/danh-bo-collect.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -74,6 +90,8 @@ if (!audioFilePath) {
   console.error("  node scripts/probe-danh-bo-vad.mjs samples/2_22082351775.wav");
   process.exit(1);
 }
+// [them 24/08/2026 #4] Tuy chon - xem ghi chu "CACH CHAY" dau file.
+const expectedDanhBo = process.argv[3] || null;
 
 const audioSlug = path.basename(audioFilePath, path.extname(audioFilePath)).replace(/[^a-zA-Z0-9_-]+/g, "-");
 const logsDir = path.join(__dirname, "..", "logs");
@@ -312,6 +330,27 @@ function printSummary() {
     const windowMs = sessionUpdatedAfterDigitsAt - sessionUpdateDigitsSentAt;
     console.log(`  -> Gui luc +${sessionUpdateDigitsSentAt}ms, server xac nhan (session.updated) luc +${sessionUpdatedAfterDigitsAt}ms.`);
     console.log(`  -> CUA SO HO HONG DO DUOC: ${windowMs}ms (thoi gian giua luc gui va luc server xac nhan ap dung xong).`);
+  }
+
+  // [them 24/08/2026 #4] Doi chieu TRUC TIEP voi danh-bo-collect.js THAT
+  // (khong phai mo phong lai logic) - dung DUNG cach danh-bo-flow.js goi
+  // (noteDanhBoDigits tung manh THEO DUNG THU TU nhan duoc, roi lay
+  // danhBoCandidate) de biet CANDIDATE cuoi cung co dung khong voi chinh
+  // du lieu STT that vua nhan, khong can chay qua toan bo checkpoint-
+  // giai-doan-6a.mjs (xem ghi chu "CACH CHAY" dau file ve ly do).
+  console.log(`\n[doi chieu danh-bo-collect.js THAT] Gom ${transcripts.length} manh transcript qua noteDanhBoDigits()...`);
+  const session = createDanhBoSession();
+  for (const t of transcripts) noteDanhBoDigits(session, t);
+  const complete = isDanhBoComplete(session);
+  const candidate = danhBoCandidate(session);
+  console.log(`  digits gom duoc: "${session.digits}" (${session.digits.length} chu so)`);
+  console.log(`  isDanhBoComplete(): ${complete}`);
+  console.log(`  danhBoCandidate(): ${candidate ?? "(chua du 11 so, null)"}`);
+  if (expectedDanhBo) {
+    const khop = candidate === expectedDanhBo;
+    console.log(`  So voi ma danh bo MONG DOI (${expectedDanhBo}): ${khop ? "KHOP DUNG" : "**KHONG KHOP**"}`);
+  } else {
+    console.log("  (khong truyen ma danh bo mong doi qua argv[3] nen khong tu doi chieu dung/sai)");
   }
 
   console.log(`\n[probe-danh-bo-vad] Log day du: ${logPath}`);

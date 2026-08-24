@@ -104,18 +104,34 @@ if (!/^true$/i.test(process.env.TONGDAI_API_INSECURE_TLS || "")) {
 }
 
 // Ma danh bo THAT, da xac nhan co du lieu billing trong moi truong test
-// hien tai (giong checkpoint-giai-doan-5b.mjs) - phai KHOP voi so da doc
-// trong samples/6a_doc_so_22023251775.wav (gen-sample-6a.mjs).
+// hien tai (giong checkpoint-giai-doan-5b.mjs) - phai KHOP voi so DA DOC
+// trong file audio doc so dang dung (mac dinh
+// samples/6a_doc_so_22023251775.wav, gen-sample-6a.mjs).
 const MA_DANH_BO = "22023251775";
 
-const AUDIO_DOC_SO = path.join(__dirname, "..", "samples", "6a_doc_so_22023251775.wav");
+// [them 24/08/2026 #5, theo audit docs/fix/giai_doan_6a_audit_kich_ban_da_
+// test_20260824.md - muc "Chua test o muc nay"] AUDIO_DOC_SO gio nhan
+// duoc THEM 1 duong dan audio TUY CHON qua tham so dong lenh (argv[2]) -
+// de tai su dung DUNG checkpoint nay (khong viet ban sao rieng) cho cac
+// file doc so KHAC file "sach" mac dinh, vd samples/6_ngap_ngung.wav (doc
+// ngap ngung, DA xac nhan qua probe-danh-bo-vad.mjs la CUNG ma danh bo
+// 22023251775, chi khac cach doc - xem file audit). KHONG doi MA_DANH_BO/
+// tieu chi PASS o day - CHI hop le khi file audio truyen vao van doc DUNG
+// so 22023251775 (vd file "tap am" doc so KHAC se can 1 kich ban rieng,
+// chua lam o day - xem ghi chu file audit).
+//   node scripts/checkpoint-giai-doan-6a.mjs                       # mac dinh, file sach
+//   node scripts/checkpoint-giai-doan-6a.mjs samples/6_ngap_ngung.wav  # doc ngap ngung
+const AUDIO_DOC_SO = process.argv[2]
+  ? path.resolve(process.argv[2])
+  : path.join(__dirname, "..", "samples", "6a_doc_so_22023251775.wav");
 const AUDIO_XAC_NHAN_DUNG = path.join(__dirname, "..", "samples", "6a_xac_nhan_dung.wav");
 for (const f of [AUDIO_DOC_SO, AUDIO_XAC_NHAN_DUNG]) {
   if (!fs.existsSync(f)) {
-    console.error(`[checkpoint-6a] Thieu file audio ${f} - chay truoc: node scripts/gen-sample-6a.mjs`);
+    console.error(`[checkpoint-6a] Thieu file audio ${f} - chay truoc: node scripts/gen-sample-6a.mjs (neu la file mac dinh)`);
     process.exit(1);
   }
 }
+console.log(`[checkpoint-6a] Dung file audio doc so: ${AUDIO_DOC_SO}`);
 
 // Nguyen van tu voice_bot/src/system-prompt.js#TOOLS (get_bill), giong het
 // checkpoint-giai-doan-5b.mjs - dung CUNG schema that de khong lech.
