@@ -190,7 +190,13 @@ test("qua nguong maxAttempts (mac dinh 3) lien tiep bao SAI -> 'failed', VAD tra
   assert.deepEqual(doneCalls, [{ ok: false, reason: "qua so lan khach bao sai" }]);
   assert.deepEqual(vadModes, ["digits", "normal"], "failed PHAI tu tra VAD ve 'normal'");
   const lastSay = sayCalls[sayCalls.length - 1];
-  assert.deepEqual(lastSay, { mode: "verbatim", text: GIVE_UP_TEXT }, "giveUp() phai tu say() 1 cau xin loi, khong im lang ngo cut");
+  // [them 24/08/2026 #6] toolChoice:"none" - xem "sua 24/08/2026 #6" dau
+  // danh-bo-flow.js.
+  assert.deepEqual(
+    lastSay,
+    { mode: "verbatim", text: GIVE_UP_TEXT, toolChoice: "none" },
+    "giveUp() phai tu say() 1 cau xin loi, khong im lang ngo cut, VA phai chan model tu goi tool khac",
+  );
 });
 
 test("maxAttempts tuy chinh duoc qua opts", () => {
@@ -264,6 +270,36 @@ test("start() goi lai trong luc dang chay (arming/asking/confirming) bi bo qua, 
 
   assert.equal(flow.getPhase(), "asking", "khong bi reset ve arming");
   assert.equal(vadModes.length, 1, "khong goi setVadMode them lan nao");
+});
+
+// [them 24/08/2026 #6, xem "sua 24/08/2026 #6" dau danh-bo-flow.js] Bug
+// that phat hien qua checkpoint-giai-doan-6a.mjs chay voi samples/
+// 6_ngap_ngung.wav: get_bill bi goi THUA 1 lan (3 lan thay vi 2) trong luc
+// dang GOM/XAC NHAN so - vi 4 say() cua module nay khong chan tool_choice,
+// model TU Y goi get_bill duoc (an toan vi callState.danhBo chua co, chi
+// la lang phi 1 lan goi). 4 test duoi day xac nhan CA 4 say() deu kem
+// toolChoice:"none" - khong luot noi nao trong luc gom/xac nhan con duoc
+// phep de model tu goi tool nua.
+test("[fix 24/08/2026 #6] askPrompt() (start()) kem toolChoice:'none' - khong de model tu goi tool trong luc hoi so", () => {
+  const { flow, sayCalls } = createHarness();
+  flow.start("test", 0);
+  assert.equal(sayCalls[0].toolChoice, "none");
+});
+
+test("[fix 24/08/2026 #6] confirmPrompt() kem toolChoice:'none' - khong de model tu goi tool trong luc doc lai xin xac nhan", () => {
+  const { flow, sayCalls } = createHarness();
+  armAndAsk(flow);
+  flow.handleSignal({ kind: "transcript-ready", text: CANDIDATE }, 100);
+  assert.equal(flow.getPhase(), "confirming");
+  assert.equal(sayCalls[sayCalls.length - 1].toolChoice, "none");
+});
+
+test("[fix 24/08/2026 #6] cau hoi lai khi khong ro rang (mode guided) kem toolChoice:'none'", () => {
+  const { flow, sayCalls } = createHarness();
+  armAndAsk(flow);
+  flow.handleSignal({ kind: "transcript-ready", text: CANDIDATE }, 100);
+  flow.handleSignal({ kind: "transcript-ready", text: "em muốn hỏi thêm về định mức nước" }, 200);
+  assert.equal(sayCalls[sayCalls.length - 1].toolChoice, "none");
 });
 
 test("start() lai sau khi 'done' hoac 'failed' hoat dong binh thuong (phien MOI)", () => {

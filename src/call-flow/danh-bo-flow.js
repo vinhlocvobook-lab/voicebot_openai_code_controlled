@@ -110,19 +110,39 @@ export function createDanhBoFlow({
   let attempts = 0;
   let lastActivityAtMs = null;
 
+  // [them 24/08/2026 #6, PHAT HIEN THAT qua checkpoint-giai-doan-6a.mjs
+  // chay voi samples/6_ngap_ngung.wav - CUNG LOAI BUG voi "sua 24/08/2026
+  // #4" (turn-controller.js/dispatch-tool-call.js), NHUNG o 1 CHO KHAC]
+  // Du lieu that: get_bill bi goi 3 LAN thay vi 2 - lan giua (lan 2/3) co
+  // args DA CHINH XAC ("22023251775") nhung callState.danhBo CHUA duoc
+  // set (van dang o phase "confirming", khach CHUA xac nhan xong) nen
+  // resolveDanhBoRef dung tra ve DANH_BO_MISSING (an toan, KHONG co du
+  // lieu SAI lot ra ngoai) - nhung day van la 1 lan goi tool THUA, DO
+  // model TU Y goi trong luc nghe CHINH confirmPrompt() (cau doc lai so
+  // xin xac nhan) hoac askPrompt(), vi CA 4 say() trong module nay (khac
+  // voi 4 say() trong dispatch-tool-call.js#handleDanhBoFlowDone da sua o
+  // #4) truoc gio KHONG kem toolChoice - get_bill van con khai bao suot
+  // session nen model TU DO goi duoc bat ky luc nao co response.create
+  // khong bi han che tool_choice, dung 1 nguyen nhan can gap voi bug #4,
+  // chi khac VI TRI xay ra (trong luc dang GOM/XAC NHAN so, thay vi SAU
+  // KHI da xac nhan xong). Sua CUNG 1 CACH: them toolChoice:"none" vao CA
+  // 4 say() cua module nay - trong SUOT qua trinh gom/xac nhan danh bo,
+  // KHONG co luot noi nao can/duoc phep de model tu goi bat ky tool nao
+  // (get_bill hay tool khac) - code se tu goi lai SAU KHI flow nay xong
+  // (xem dispatch-tool-call.js#handleDanhBoFlowDone).
   function askPrompt() {
-    say({ mode: "verbatim", text: ASK_PROMPT });
+    say({ mode: "verbatim", text: ASK_PROMPT, toolChoice: "none" });
   }
 
   function confirmPrompt() {
-    say({ mode: "verbatim", text: buildConfirmPrompt(danhBoCandidate(session)) });
+    say({ mode: "verbatim", text: buildConfirmPrompt(danhBoCandidate(session)), toolChoice: "none" });
   }
 
   function giveUp(lyDo) {
     log("warn", `danh-bo-flow: bo cuoc (${lyDo})`);
     phase = "failed";
     setVadMode("normal");
-    say({ mode: "verbatim", text: GIVE_UP_TEXT });
+    say({ mode: "verbatim", text: GIVE_UP_TEXT, toolChoice: "none" });
     onDone({ ok: false, reason: lyDo });
   }
 
@@ -226,7 +246,7 @@ export function createDanhBoFlow({
     attempts += 1;
     if (attempts > maxAttempts) return giveUp("qua so lan khach tra loi khong ro rang");
     log("info", `danh-bo-flow: cau tra loi khong ro rang (lan ${attempts}/${maxAttempts}) - hoi lai`);
-    say({ mode: "guided", instructions: UNCLEAR_CONFIRM_INSTRUCTIONS });
+    say({ mode: "guided", instructions: UNCLEAR_CONFIRM_INSTRUCTIONS, toolChoice: "none" });
   }
 
   // Ben goi (lop tich hop that) tu dat 1 interval goi ham nay dinh ky voi
