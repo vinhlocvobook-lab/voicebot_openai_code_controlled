@@ -42,6 +42,24 @@
 const MUTE_THRESHOLD_MS = 5000;
 const VAD_RESTORE_THRESHOLD_MS = 20000;
 
+// [them 25/08/2026] Phat hien tu chinh log THAT cua lan chay checkpoint nay
+// (xem docs/roadmap.md "Cap nhat 25/08/2026 #3"): khi mute watchdog kich
+// hoat, code cu goi turnController.say() TRAN (mode "auto", KHONG co
+// instructions gi ca) - khong co persona/system prompt nao dang duoc nap o
+// checkpoint nay (watchdogs.js la lop session-level, khong biet gi ve
+// nghiep vu/persona - dung thiet ke), nen model tu "bia" ra 1 cau tra loi
+// LAC DE, sai giong dieu CSKH ("Da, dung roi, nghe kha la tu tin luon...").
+// Sua theo DUNG khuon UNCLEAR_CONFIRM_INSTRUCTIONS cua danh-bo-flow.js: dung
+// say({mode:"guided", instructions, toolChoice:"none"}) de EP noi dung xin
+// loi + hoi lai, khong de model "auto" tu quyet dinh noi gi khi khong co gi
+// dan duong ca. Noi dung CO Y chung chung/khong gan nghiep vu cu the (dung
+// nguyen tac watchdogs.js/checkpoint nay khong duoc hardcode noi dung
+// nghiep vu) - ben tich hop that (sau nay co server.js) co the thay bang
+// cau phu hop persona/nghiep vu that cua ho.
+const MUTE_RECOVERY_INSTRUCTIONS =
+  "Xin lỗi Quý Khách thật ngắn gọn vì vừa im lặng hơi lâu, sau đó hỏi lại xem Quý Khách cần hỗ trợ gì hoặc " +
+  "nhắc lại điều Quý Khách vừa nói, giọng điệu nhân viên chăm sóc khách hàng tự nhiên, không giải thích lý do kỹ thuật.";
+
 import "dotenv/config";
 import WebSocket from "ws";
 import fs from "node:fs";
@@ -163,7 +181,7 @@ const watchdogInterval = setInterval(() => {
     muteFireEvents.push(t);
     tee(`[checkpoint-7] *** MUTE WATCHDOG KICH HOAT tai +${t}ms *** - tu mo khoa VAD + ep model tra loi.`);
     setVadMode("normal");
-    turnController.say();
+    turnController.say({ mode: "guided", instructions: MUTE_RECOVERY_INSTRUCTIONS, toolChoice: "none" });
   }
   if (vadRestoreWatchdog.checkWatchdog(t)) {
     vadRestoreFireEvents.push(t);

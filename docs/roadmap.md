@@ -1035,6 +1035,38 @@ cho cả lộ trình này:
   sản xuất CHÍNH THỨC (15000ms/90000ms - mặc định của `watchdogs.js`, giữ
   nguyên từ bản cũ) chưa được chốt lại lần cuối với chủ dự án.
 
+  **Cập nhật 25/08/2026 #3 - soát lại "có cần thử nghiệm hiệu quả prompt/tool
+  description không" (chủ dự án hỏi), PHÁT HIỆN qua đọc log THẬT của lần chạy
+  #2 ở trên: câu trả lời mà mute watchdog ép model nói ra bị LẠC ĐỀ, sai giọng
+  điệu CSKH.** Đọc `logs/checkpoint7-<timestamp>.txt` (`device_bash grep`)
+  thấy đúng tại thời điểm `muteFireEvents[0]`, nội dung `ai-said` là: "Dạ,
+  đúng rồi, nghe khá là tự tin luôn. Nếu mình giúp gì thêm hay cần nói rõ hơn
+  topic nào, cứ nói nhé! Mình sẵn sàng." - không liên quan gì đến việc "vừa im
+  lặng lâu, xin lỗi + hỏi lại khách cần gì". Gốc rễ: nhánh xử lý mute watchdog
+  trong checkpoint gọi `turnController.say()` TRẦN (mode "auto", KHÔNG có
+  `instructions` gì cả) - checkpoint này là lớp session-level, không có
+  persona/system prompt nào được nạp (đúng thiết kế `watchdogs.js` - không
+  biết gì về nghiệp vụ), nên khi bị ép nói mà không có gì dẫn dắt, model tự
+  "bịa" nội dung tuỳ ý. Đây ĐÚNG lớp lỗi đã gặp ở Giai đoạn 6b lần chạy thử
+  #1 (thiếu ví dụ/instructions cụ thể → model chọn sai giọng).
+
+  Sửa: thêm hằng `MUTE_RECOVERY_INSTRUCTIONS` (nội dung CHUNG CHUNG, không
+  gắn nghiệp vụ cụ thể - đúng nguyên tắc `watchdogs.js`/checkpoint không được
+  hardcode nội dung nghiệp vụ), đổi nhánh mute watchdog kích hoạt từ
+  `turnController.say()` sang `turnController.say({ mode: "guided",
+  instructions: MUTE_RECOVERY_INSTRUCTIONS, toolChoice: "none" })` - dùng
+  ĐÚNG khuôn `UNCLEAR_CONFIRM_INSTRUCTIONS` của `danh-bo-flow.js` (ép nội
+  dung qua `instructions` thay vì để mode "auto" tự quyết định khi không có
+  gì dẫn dắt). `node --check` + `npm test` cục bộ: 277/277 xanh, không hồi
+  quy (chỉ sửa 1 file script, không đụng `src/`). Đã chuyển file qua thiết bị,
+  hash khớp cả 2 phía
+  (`258341be3679184b904d66c0d06c58103afdb7a88f929723e66eddf5546b9163`),
+  `node --check` trên máy chủ dự án cũng OK. **Còn lại: cần chủ dự án chạy
+  lại `node scripts/checkpoint-giai-doan-7-watchdogs.mjs` 1 lần nữa để KIỂM
+  CHỨNG THẬT nội dung câu trả lời mới có đúng giọng điệu CSKH hay không (chưa
+  chạy thật lần nào với bản sửa này) - đúng chu trình "chạy thật → thấy lỗi →
+  sửa prompt → chạy lại xác nhận" đã dùng ở Giai đoạn 6b.**
+
 - [ ] **Giai đoạn 8 - Nối SIP thật qua OpenAI Realtime Calls API.**
   Chuyển `call-manager.js` (accept/reject/refer/hangup) sang cuối cùng -
   sau khi toàn bộ logic phía trên đã test được mà không cần điện thoại
@@ -1044,6 +1076,71 @@ cho cả lộ trình này:
   (Thí nghiệm C, Giai đoạn 1 - hiện KHÔNG khả thi, xem "Ràng buộc kiến
   trúc"), đây là quyết định kiến trúc riêng cần bật lại audio thô, ngoài
   phạm vi lộ trình này - phải hỏi lại chủ dự án trước.
+
+  **Cập nhật 25/08/2026 - bắt đầu triển khai (nhánh `giai-doan-8-sip-calls-api`),
+  port 2 module THUẦN trước (theo quyết định của chủ dự án: hạ tầng SIP thật
+  đã có sẵn/đang chạy bản cũ, nên port phần test-được-không-cần-hạ-tầng-thật
+  trước, phần cần gọi thật để lại bước sau).** Đọc trực tiếp (không đoán)
+  `voice_bot/src/call-manager.js`, `voice_bot/server.js`,
+  `voice_bot/src/webhook-verify.js`, `voice_bot/src/session-ws.js` (bản cũ,
+  hàm `openSessionWebSocket`) để hiểu đúng luồng thật: Asterisk → SIP trunk →
+  `sip:{PROJECT_ID}@sip.api.openai.com` → OpenAI POST webhook
+  `realtime.call.incoming` → server `POST /v1/realtime/calls/{call_id}/accept`
+  (đây là nơi gửi `model`/`instructions`/`tools`/`reasoning`/`audio.output.voice`
+  - KHÁC checkpoint 1-7 vốn gửi các thứ này qua `session.update` sau khi WS mở)
+  → server mở WS `wss://api.openai.com/v1/realtime?call_id={callId}` (KHÁC
+  `?model=...` mà `connectRealtimeSession()` hiện dùng - session-ws.js cần
+  sửa thêm ở bước sau để hỗ trợ cả 2 cách connect). Đối chiếu thêm
+  `src/domain/call-control.js`/`src/domain/tool-router.js`/
+  `src/call-flow/dispatch-tool-call.js` của bản MỚI: xác nhận đúng điểm còn
+  thiếu thật sự để nối SIP - `action:"no_reply"` đã xử lý đúng từ Giai đoạn
+  6a, nhưng `action:"end_call"`/`"transfer_to_agent"` CỐ Ý CHƯA xử lý (ghi rõ
+  trong `dispatch-tool-call.js`: "sẽ xử lý khi nối SIP thật") - đây chính là
+  việc cần làm ở bước tích hợp tiếp theo của Giai đoạn 8.
+
+  Đã port, GIỮ NGUYÊN các fix kỹ thuật thật:
+  - `src/integrations/realtime-calls-api.js` (đổi tên từ `call-manager.js`,
+    chuyển vào `src/integrations/` - cùng nhóm với `tongdai-api.js`/
+    `calllog-api.js`, đúng vai trò "client gọi REST API ngoài"). 2 thay đổi
+    kiến trúc so với bản cũ (ghi rõ lý do trong code): (1) tách hẳn nghiệp vụ
+    (`SYSTEM_PROMPT`/`TOOLS`/ghép `customerContext`) ra khỏi file - `acceptCall()`
+    giờ nhận thẳng `sessionFields` đã chuẩn bị sẵn từ lớp gọi, đúng nguyên tắc
+    đã đặt ra từ Giai đoạn 5 cho `tongdai-api.js`; (2) BỎ 2 `setTimeout` ẩn
+    (2000ms/3000ms) trong `referCall()`/`hangupCall()` của bản cũ - đây là
+    "vá race" của kiến trúc cũ (không có tín hiệu tin cậy "AI đã nói xong lời
+    tạm biệt" nên tự chế bằng timer cố định); dự án mới đã có tín hiệu thật
+    `"response-ended"` (`turn-signal.js`/`turn-controller.js`, Giai đoạn 2-3),
+    nên bỏ hẳn timer - lớp tích hợp thật (bước sau) tự quyết định ĐÚNG LÚC gọi.
+    Giữ nguyên: `acceptCall()` trả về CHÍNH body đã gửi (không phải response
+    OpenAI - đúng ý bản cũ, để logger phân tích prompt sau này); `hangupCall()`
+    coi HTTP 404 là thành công (cuộc gọi đã kết thúc trước đó); `acceptCall()`/
+    `rejectCall()` THROW khi thất bại (khác quy ước `{success,...}` của
+    `tongdai-api.js` - vì đây là thất bại THIẾT LẬP cuộc gọi, không có gì để
+    "trả lỗi nhẹ nhàng" nữa, đúng bản cũ) còn `referCall()`/`hangupCall()`
+    nuốt lỗi (best-effort, đúng bản cũ).
+  - `src/webhook-verify.js` (giữ nguyên vị trí phẳng dưới `src/`, không thuộc
+    `session/domain/call-flow/integrations` - đây là lớp xác minh HTTP webhook
+    đầu vào, khác bản chất cả 4 thư mục kia) - port Y NGUYÊN, hàm thuần 100%
+    (HMAC-SHA256 chuẩn Svix), không có gì để sửa/bỏ.
+
+  Test: `test/realtime-calls-api.test.mjs` (giả lập `globalThis.fetch`, đúng
+  khuôn `test/tongdai-api.test.mjs` - kiểm cả việc referCall/hangupCall giờ
+  gọi NGAY, không còn độ trễ giả tạo) + `test/webhook-verify.test.mjs` (tự ký
+  chữ ký hợp lệ bằng đúng công thức Svix rồi kiểm accept/reject mọi biến thể
+  sai - chữ ký sai, body bị sửa, thiếu header, timestamp cũ, nhiều chữ ký,
+  thiếu secret). Tổng 313/313 pass cục bộ, không hồi quy. `.env.example` bổ
+  sung `OPENAI_PROJECT_ID`/`OPENAI_WEBHOOK_SECRET`/`WEBHOOK_PATH`.
+
+  Còn lại (chưa làm, cần cuộc gọi SIP thật để kiểm chứng - không phải quên):
+  viết `server.js` thật (Express nhận webhook, gọi `acceptCall` với
+  `sessionFields` - phụ thuộc phần system-prompt.js còn lại của Giai đoạn 5,
+  hiện CHƯA viết); sửa `session-ws.js`/`connectRealtimeSession()` để hỗ trợ
+  connect bằng `call_id` (hiện chỉ hỗ trợ `?model=...`); nối
+  `action:"end_call"`/`"transfer_to_agent"` ở `dispatch-tool-call.js` vào
+  `hangupCall()`/`referCall()` thật, chờ đúng tín hiệu `"response-ended"`
+  trước khi gọi (không dùng timer cố định như bản cũ); sau đó mới chạy thật
+  qua hạ tầng SIP có sẵn (chủ dự án xác nhận đã có Asterisk trunk + webhook
+  public đang chạy bản cũ, có thể tạm trỏ sang bản mới khi cần test thật).
 
 - [ ] **Giai đoạn 9 - Đối chiếu với bộ test cũ.** Chuyển/thích nghi 4 file
   trong `test_case/*.test.mjs` của bản cũ (`danh_bo_20260726`,
