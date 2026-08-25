@@ -23,12 +23,35 @@
 // Script nay: bat model NOI 1 cau doc lai so + hoi xac nhan (dung text
 // injection + response.create, KHONG can system-prompt.js that cua 6b -
 // chi can mo phong DUNG HINH DANG 1 luot "model doc lai xin xac nhan"), roi
-// phat NGAY audio khach xac nhan that (samples/6a_xac_nhan_dung.wav, da co
-// san, da qua kiem tra bang tai) - ghi lai TOAN BO raw event (khong chi
+// phat NGAY audio khach xac nhan that (mac dinh samples/6a_xac_nhan_dung.wav,
+// da co san, da qua kiem tra bang tai) - ghi lai TOAN BO raw event (khong chi
 // normalize) de doi chieu truc tiep item id cua ca 2 phia.
 //
+// [them 25/08/2026] CAU HOI THEM tu chu du an, sau khi thay createReadback
+// Matcher() (danh-bo-readback-match.js) chi lay manh user-item-added DAU
+// TIEN: neu khach TRA LOI XAC NHAN cung bi VAD tach thanh NHIEU manh (khach
+// "noi ngat quang", khac voi "noi lien tuc" da thu o lan chay dau
+// 24/08/2026), thi:
+//   1. Co bao nhieu input_audio_buffer.committed / conversation.item.added
+//      (role:"user") / conversation.item.input_audio_transcription.completed
+//      xay ra cho MOT cau tra loi cua khach?
+//   2. previous_item_id tren input_audio_buffer.committed (DA co bang chung
+//      That noi CHUNG tu Giai doan 1 - xem docs/fix/giai_doan_1_quan_sat_
+//      event_that_20260820.md dong 288-291) CO noi dung cac manh nay lai
+//      voi nhau trong TINH HUONG CU THE nay (cau tra loi xac nhan NGAN,
+//      khac voi cau doc 11 chu so DAI da kiem chung o Giai doan 1) khong?
+//   3. conversation.item.added CO field previous_item_id o CAP TOP-LEVEL
+//      (khac voi cap `item` da xac nhan KHONG co o lan chay truoc) khong -
+//      va gia tri co khop voi item truoc do cua CHINH khach (chuoi cung vai)
+//      khong?
+// Sua script de nhan DUONG DAN FILE AUDIO KHACH tu CLI arg (mac dinh giu
+// nguyen hanh vi cu neu khong truyen) va THEO DOI TOAN BO cac manh (khong
+// dong lai o manh DAU TIEN nhu truoc) - xem CLI_AUDIO_PATH/committedEvents/
+// customerTranscriptEvents duoi day.
+//
 // CACH CHAY (tren may that, can OPENAI_API_KEY trong .env):
-//   node scripts/probe-confirm-danh-bo.mjs
+//   node scripts/probe-confirm-danh-bo.mjs                                    # cau tra loi LIEN TUC (mac dinh, giong lan chay 24/08/2026)
+//   node scripts/probe-confirm-danh-bo.mjs samples/6b_xac_nhan_ngat_quang.wav # cau tra loi NGAT QUANG (chay gen-sample-confirm-ngat-quang.mjs truoc)
 //
 // KET QUA: logs/probe-confirm-danh-bo-<timestamp>.jsonl (toan bo event tho)
 // + tom tat cuoi cung in ra console (xem printSummary() cuoi file) - tra
@@ -54,9 +77,15 @@ if (!API_KEY) {
   process.exit(1);
 }
 
-const AUDIO_XAC_NHAN_DUNG = path.join(__dirname, "..", "samples", "6a_xac_nhan_dung.wav");
+// [them 25/08/2026] Cho phep truyen duong dan audio khach qua CLI arg (xem
+// vi du chay o dau file) - mac dinh giu NGUYEN file cu (cau tra loi lien
+// tuc) de khong pha vo kha nang chay lai doi chung voi ket qua 24/08/2026.
+const CLI_AUDIO_ARG = process.argv[2];
+const AUDIO_XAC_NHAN_DUNG = CLI_AUDIO_ARG
+  ? path.resolve(process.cwd(), CLI_AUDIO_ARG)
+  : path.join(__dirname, "..", "samples", "6a_xac_nhan_dung.wav");
 if (!fs.existsSync(AUDIO_XAC_NHAN_DUNG)) {
-  console.error(`[probe-confirm-danh-bo] Thieu file ${AUDIO_XAC_NHAN_DUNG} - chay truoc: node scripts/gen-sample-6a.mjs`);
+  console.error(`[probe-confirm-danh-bo] Thieu file ${AUDIO_XAC_NHAN_DUNG} - chay truoc: node scripts/gen-sample-6a.mjs (hoac gen-sample-confirm-ngat-quang.mjs).`);
   process.exit(1);
 }
 
@@ -80,8 +109,14 @@ const t0 = Date.now();
 let aiItemId = null; // item_id cua CAU MODEL doc lai (tu response.output_audio_transcript.done)
 let aiResponseId = null;
 const conversationItemsRaw = []; // {source: "added"|"done", item} - TOAN BO conversation.item.* THAT nhan duoc, KHONG loc
-let customerTranscriptEvent = null; // raw event conversation.item.input_audio_transcription.completed
+// [them 25/08/2026] Doi tu 1 bien don (customerTranscriptEvent) sang MANG -
+// khach co the tra loi NGAT QUANG, VAD co the tach thanh NHIEU manh, moi
+// manh la 1 event rieng. KHONG con dung "co transcript dau tien" lam dieu
+// kien dung nua (xem hardTimeout/quiet-period logic ben duoi).
+const customerTranscriptEvents = []; // [{...raw event}]
+const committedEvents = []; // [{itemId, previousItemId, elapsedMs}] - tu input_audio_buffer.committed
 let responseDoneSeen = false;
+let lastCustomerActivityAtMs = null; // debounce: dong ket noi sau 1 khoang IM LANG kem theo, khong dong ngay khi thay manh DAU TIEN
 
 function logEvent(direction, event) {
   const elapsedMs = Date.now() - t0;
@@ -99,14 +134,31 @@ function logEvent(direction, event) {
   if (event.type === "response.done") {
     responseDoneSeen = true;
   }
+  // [them 25/08/2026] input_audio_buffer.committed - da co bang chung That
+  // (Giai doan 1) la co previous_item_id, dung de noi cac manh VAD tach cua
+  // CUNG 1 luot noi. Ghi lai TOAN BO (khong chi 1 manh) de xem co xay ra
+  // NHIEU LAN cho 1 cau tra loi xac nhan hay khong (CHUA kiem chung rieng
+  // cho tinh huong nay - xem chu thich dau file).
+  if (event.type === "input_audio_buffer.committed") {
+    committedEvents.push({ itemId: event.item_id ?? null, previousItemId: event.previous_item_id ?? null, elapsedMs });
+    console.log(`    -> committed: item_id=${event.item_id} previous_item_id=${event.previous_item_id ?? "(null)"}`);
+  }
   if (event.type === "conversation.item.added" || event.type === "conversation.item.done") {
     // Ghi lai TOAN BO item object THAT server gui - KHONG doan truoc field
-    // nao co/khong co, in het ra de doc bang mat.
-    conversationItemsRaw.push({ source: event.type, item: event.item ?? null });
+    // nao co/khong co, in het ra de doc bang mat. Giu ca previous_item_id
+    // CAP TOP-LEVEL cua event (khac voi cap `item` - lan chay truoc da xac
+    // nhan `item` KHONG co field nay, nhung CHUA kiem tra rieng cap top-level
+    // cho item CUA KHACH khi bi VAD tach nhieu manh).
+    conversationItemsRaw.push({
+      source: event.type,
+      previousItemIdTopLevel: event.previous_item_id ?? null,
+      item: event.item ?? null,
+    });
   }
   if (event.type === "conversation.item.input_audio_transcription.completed") {
-    customerTranscriptEvent = event;
-    console.log(`    -> KHACH noi: "${event.transcript}" (item_id=${event.item_id})`);
+    customerTranscriptEvents.push(event);
+    lastCustomerActivityAtMs = Date.now();
+    console.log(`    -> KHACH noi (manh #${customerTranscriptEvents.length}): "${event.transcript}" (item_id=${event.item_id})`);
     console.log(`    -> RAW EVENT DAY DU: ${JSON.stringify(event)}`);
   }
 }
@@ -174,13 +226,26 @@ ws.on("message", (raw) => {
   if (event.type === "error") {
     console.error("[probe-confirm-danh-bo] Server bao loi:", JSON.stringify(event.error ?? event));
   }
-
-  // Ket thuc khi DA co ca transcript cua khach (khong can doi gi them nua).
-  if (customerTranscriptEvent && phase !== "done") {
-    phase = "done";
-    setTimeout(closeSoon, 500); // doi chut phong truong hop con conversation.item.done tra ve cham hon
-  }
 });
+
+// [them 25/08/2026] THAY THE "dong ngay khi thay manh dau tien" (cu) bang
+// debounce theo THOI GIAN IM LANG - can cho HET cac manh neu khach tra loi
+// ngat quang (nhieu manh lien tiep), khong duoc dong som sau manh DAU TIEN
+// (se lam mat du lieu cac manh sau, dung CHINH cai bug dang can kiem chung).
+// 4000ms chon RONG hon nhieu so voi khoang ngung giua cac cum da do THAT o
+// Giai doan 1 (~416-1348ms, xem docs/fix/giai_doan_1_...) - danh du bien do
+// an toan, KHONG doan thap hon se bi cat manh cuoi.
+const QUIET_PERIOD_MS = 4000;
+setInterval(() => {
+  if (closing) return;
+  if (phase !== "streaming-customer-reply" && phase !== "done") return;
+  if (lastCustomerActivityAtMs === null) return;
+  if (Date.now() - lastCustomerActivityAtMs >= QUIET_PERIOD_MS) {
+    console.log(`[probe-confirm-danh-bo] Da im lang ${QUIET_PERIOD_MS}ms sau manh transcript cuoi cung - coi la KHACH da noi xong.`);
+    phase = "done";
+    closeSoon();
+  }
+}, 250).unref();
 
 // ── Doc WAV toi gian (copy tu probe-danh-bo-vad.mjs) ──────────────────────
 function readWavPcm16(filePath) {
@@ -256,33 +321,52 @@ function closeSoon() {
 
 function printSummary() {
   console.log("\n[probe-confirm-danh-bo] ===== TOM TAT =====");
-  console.log(`\nitem_id cua CAU MODEL doc lai xac nhan: ${aiItemId ?? "(KHONG bat duoc - xem log day du)"}`);
+  console.log(`\nFile audio khach dung lan chay nay: ${AUDIO_XAC_NHAN_DUNG}`);
+  console.log(`item_id cua CAU MODEL doc lai xac nhan: ${aiItemId ?? "(KHONG bat duoc - xem log day du)"}`);
   console.log(`response.done cua luot model: ${responseDoneSeen}`);
 
-  console.log(`\nconversation.item.added/done THAT nhan duoc (${conversationItemsRaw.length} entry) - IN NGUYEN item object:`);
+  console.log(`\nconversation.item.added/done THAT nhan duoc (${conversationItemsRaw.length} entry) - IN NGUYEN item object + previous_item_id CAP TOP-LEVEL:`);
   conversationItemsRaw.forEach((entry, i) => {
-    console.log(`  [${i}] (${entry.source}) ${JSON.stringify(entry.item)}`);
+    console.log(`  [${i}] (${entry.source}) previous_item_id(top-level)=${entry.previousItemIdTopLevel ?? "(null)"} item=${JSON.stringify(entry.item)}`);
   });
 
-  console.log(`\nconversation.item.input_audio_transcription.completed cua KHACH:`);
-  if (!customerTranscriptEvent) {
-    console.log("  -> KHONG nhan duoc (het thoi gian cho hoac loi mang - xem log day du).");
+  console.log(`\ninput_audio_buffer.committed THAT nhan duoc (${committedEvents.length} entry) - previous_item_id da chuan hoa san o turn-signal.js (buffer-committed.previousItemId):`);
+  committedEvents.forEach((c, i) => {
+    console.log(`  [${i}] +${c.elapsedMs}ms item_id=${c.itemId} previous_item_id=${c.previousItemId ?? "(null)"}`);
+  });
+
+  console.log(`\nconversation.item.input_audio_transcription.completed cua KHACH (${customerTranscriptEvents.length} manh):`);
+  if (customerTranscriptEvents.length === 0) {
+    console.log("  -> KHONG nhan duoc manh nao (het thoi gian cho hoac loi mang - xem log day du).");
   } else {
-    console.log(`  Raw event: ${JSON.stringify(customerTranscriptEvent)}`);
-    const hasPreviousItemId = Object.prototype.hasOwnProperty.call(customerTranscriptEvent, "previous_item_id");
-    console.log(`\n[CAU HOI CAN TRA LOI] Event nay CO field "previous_item_id" khong? ${hasPreviousItemId ? "CO" : "KHONG"}`);
-    if (hasPreviousItemId) {
-      const khop = customerTranscriptEvent.previous_item_id === aiItemId;
-      console.log(`  previous_item_id = "${customerTranscriptEvent.previous_item_id}"`);
-      console.log(`  So voi item_id cua cau model (${aiItemId}): ${khop ? "KHOP DUNG - previous_item_id CO THE dung de ghep cap qua vai (AI -> khach) nhu thiet ke 6b gia dinh" : "KHONG KHOP - previous_item_id KHONG tro ve dung item cua model, GIA DINH cua thiet ke 6b (buoc 1) SAI, can 1 co che ghep cap KHAC (vd chi dung thu tu/thoi gian den cua signal, hoac dung conversation.item.added/done o tren de tu xay chuoi item that su)"}`);
+    customerTranscriptEvents.forEach((ev, i) => {
+      const hasPreviousItemId = Object.prototype.hasOwnProperty.call(ev, "previous_item_id");
+      console.log(`  [${i}] item_id=${ev.item_id} previous_item_id=${hasPreviousItemId ? (ev.previous_item_id ?? "(null)") : "(KHONG CO FIELD NAY)"} transcript="${ev.transcript}"`);
+    });
+
+    console.log(`\n[CAU HOI 1] Ghep TOAN BO cac manh theo dung thu tu den (${customerTranscriptEvents.length} manh) co ra cau tra loi hop ly khong?`);
+    console.log(`  Ghep lai: "${customerTranscriptEvents.map((e) => e.transcript).join(" | ")}"`);
+
+    console.log(`\n[CAU HOI 2] previous_item_id tren input_audio_buffer.committed co NOI dung cac manh cua KHACH voi nhau khong (moi manh sau tro ve item_id cua manh truoc, CUNG vai)?`);
+    if (committedEvents.length <= 1) {
+      console.log(`  -> Chi co ${committedEvents.length} committed event - KHONG co gi de noi (khach tra loi 1 manh duy nhat trong lan chay nay).`);
     } else {
-      console.log(
-        "  -> KHONG co field nay trong event conversation.item.input_audio_transcription.completed - " +
-          "GIA DINH cua thiet ke 6b (buoc 1, \"dung previous_item_id\") KHONG AP DUNG DUOC TRUC TIEP cho chinh event nay. " +
-          "Xem danh sach conversation.item.added/done o tren - neu CAC event do CO previous_item_id trong item object, " +
-          "co the ghep cap GIAN TIEP qua item_id chung (item_id cua conversation.item.done ung voi item_id cua transcription.completed, " +
-          "roi tra previous_item_id CUA CHINH item do trong conversation.item.added/done, khong phai trong transcription.completed).",
-      );
+      for (let i = 1; i < committedEvents.length; i++) {
+        const prev = committedEvents[i - 1];
+        const cur = committedEvents[i];
+        const khop = cur.previousItemId === prev.itemId;
+        console.log(`  committed[${i}].previous_item_id ("${cur.previousItemId}") so voi committed[${i - 1}].item_id ("${prev.itemId}"): ${khop ? "KHOP DUNG - previous_item_id NOI DUNG 2 manh nay" : "KHONG KHOP"}`);
+      }
+    }
+
+    console.log(`\n[CAU HOI 3] conversation.item.added CO previous_item_id CAP TOP-LEVEL cho item CUA KHACH khong, va co dung de noi cac manh cua khach voi nhau (khac vai tro voi cau hoi lan truoc - lan truoc chi kiem tra khong co field nay tren CHINH transcription.completed)?`);
+    const userItems = conversationItemsRaw.filter((e) => e.source === "conversation.item.added" && e.item?.role === "user");
+    if (userItems.length === 0) {
+      console.log("  -> KHONG co conversation.item.added nao role:\"user\" trong log nay.");
+    } else {
+      userItems.forEach((e, i) => {
+        console.log(`  user-item[${i}] item.id=${e.item?.id} previous_item_id(top-level)=${e.previousItemIdTopLevel ?? "(null)"}`);
+      });
     }
   }
 

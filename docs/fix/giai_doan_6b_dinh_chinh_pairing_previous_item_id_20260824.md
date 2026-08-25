@@ -138,3 +138,78 @@ Các hàm matcher thật (khớp cặp end-to-end trong `danh-bo-flow`/tool
 handler mới, trích số từ câu model đọc lại, so sánh với giá trị tool,
 cache vào `callState`, lớp trọng tài gpt-5.1 ở bước 2.5) CHƯA được viết -
 xem `docs/roadmap.md` mục Giai đoạn 6b để biết thứ tự làm tiếp theo.
+
+## Cập nhật 25/08/2026 - khách trả lời NGẮT QUÃNG, `previous_item_id` dùng được cho việc KHÁC
+
+Sau khi viết xong `createReadbackMatcher()`/`resolveConfirmDanhBo()`
+(`src/call-flow/danh-bo-readback-match.js`), chủ dự án hỏi trực tiếp: "nếu
+khách trả lời ngắt quãng thì `previous_item_id` có dùng được không?" - câu
+hỏi lộ ra 1 lỗ hổng THẬT trong matcher vừa viết, và cần phân biệt rõ 2 việc
+khác nhau đều tên là `previous_item_id`:
+
+1. **Việc đã đính chính ở trên** (bước 1, ghép cặp qua VAI - item của AI
+   với item của khách): `previous_item_id` không tồn tại đúng chỗ cần, đã
+   thay bằng thứ tự `"user-item-added"`.
+2. **Việc câu hỏi 25/08/2026 hỏi tới** (khác hẳn - ghép các MẢNH của CÙNG
+   1 câu trả lời, do VAD tách): `previous_item_id` trên
+   `input_audio_buffer.committed` (đã chuẩn hoá sẵn từ Giai đoạn 1, xem
+   `docs/fix/giai_doan_1_quan_sat_event_that_20260820.md` dòng 288-291)
+   THẬT SỰ tồn tại và dùng được - nhưng bằng chứng gốc chỉ đo cho câu ĐỌC
+   11 CHỮ SỐ (dài), chưa đo cho 1 câu XÁC NHẬN (ngắn).
+
+### Bằng chứng thật (chủ dự án tự ghi âm, không phải TTS)
+
+`scripts/gen-sample-confirm-ngat-quang.mjs` (TTS, dấu "...") được thử
+trước - THẤT BẠI: TTS đọc liền mạch, không tạo khoảng ngừng đủ rõ (đã ghi
+lại trong chính file đó). Chủ dự án tự ghi âm 3 file thật thay thế, chạy
+`scripts/probe-confirm-danh-bo.mjs <file>` (đã sửa để nhận đường dẫn qua
+CLI arg + theo dõi TOÀN BỘ mảnh thay vì dừng ở mảnh đầu) cho 3 file:
+
+| File | Số mảnh (`conversation.item.input_audio_transcription.completed`) | Transcript từng mảnh | `previous_item_id` (cả `input_audio_buffer.committed` lẫn `conversation.item.added` cấp top-level) |
+| --- | --- | --- | --- |
+| `6b_xac_nhan_ngat_quang.wav` | 1 | "Dạ, để em xem lại đã. Dạ, đúng rồi ạ." | (không có gì để nối - 1 mảnh) |
+| `6b_dung_roi_ngap_ngung_noise1.wav` | 4 | "À để kiểm tra xíu." / "Vâng ạ." / "À, đúng rồi." / "Hóa đơn." | NỐI ĐÚNG 100% (3/3 cặp liên tiếp khớp, cả 2 cơ chế) |
+| `6b_dung_roi_ngap_ngung_noise2.wav` | 2 | "À" / "Để xem lại nha." | NỐI ĐÚNG 100% (1/1 cặp khớp, cả 2 cơ chế) |
+
+**Trả lời trực tiếp câu hỏi**: CÓ, `previous_item_id` (trên
+`input_audio_buffer.committed`, ĐÃ chuẩn hoá sẵn thành
+`buffer-committed.previousItemId`) dùng được để nối các mảnh của CÙNG 1
+câu trả lời khi khách nói ngắt quãng - xác nhận thật cho cả câu NGẮN
+(không chỉ câu đọc số dài như Giai đoạn 1 đã đo). `conversation.item.added`
+cũng có field này ở CẤP TOP-LEVEL (khác cấp `item` - cấp `item` đã xác
+nhận KHÔNG có ở lần chạy 24/08/2026) và cho kết quả giống hệt.
+
+**LƯU Ý CHƯA GIẢI QUYẾT**: file `noise2` transcript không hề chứa từ
+"đúng"/"sai" nào trong phạm vi đã bắt được (2 mảnh: "À" + "Để xem lại
+nha.") - có thể do khoảng ngừng trước phần "đúng rồi ạ" (nếu bản ghi âm có
+phần đó) dài hơn `QUIET_PERIOD_MS` (4000ms) của probe, bị cắt sớm trước
+khi bắt được mảnh cuối - CHƯA xác nhận, cần chủ dự án nghe lại nguyên bản
+ghi âm `noise2` để biết có phần "đúng rồi ạ" phía sau bị cắt mất hay không.
+
+### Lỗ hổng bị lộ ra + đã sửa
+
+`createReadbackMatcher()` (viết 24/08/2026) CHỈ lấy mảnh `"user-item-added"`
+ĐẦU TIÊN - với file `noise1`, việc này sẽ chỉ bắt được "À để kiểm tra xíu."
+(không có từ khẳng định/phủ định nào) thay vì cả câu đầy đủ có chứa "À,
+đúng rồi." ở mảnh thứ 3 - SAI, có thể khiến lớp tích hợp (chưa viết) hiểu
+nhầm là khách trả lời không rõ ràng và hỏi lại ngay giữa câu khách đang nói.
+
+Đã sửa: `createReadbackMatcher()` nay GOM (nối bằng khoảng trắng, đúng quy
+ước đã dùng ở `turn-signal.test.mjs`) TOÀN BỘ mảnh `"user-item-added"` đến
+sau `arm()`, dùng tín hiệu `"response-started"` (AI bắt đầu lượt kế tiếp)
+làm điểm DỪNG nhận mảnh mới - đợi transcript của MỌI mảnh đã gom xong (kể
+cả mảnh đến sau `response-started`, đúng độ trễ bất đồng bộ đã ghi nhận ở
+Giai đoạn 1) rồi mới `getResult()`.
+
+**CHƯA kiểm chứng trực tiếp** (ghi rõ trong code, không giấu): điểm dừng
+`"response-started"` là GIẢ ĐỊNH hợp lý cho production (model Giai đoạn 6b
+tự quyết định khi nào đủ để phản hồi/gọi tool `confirm_danh_bo`) nhưng
+CHƯA được probe xác nhận trực tiếp - probe ở trên dùng `create_response:
+false` (cố ý, để không bị AI xen vào giữa lúc thử nghiệm) nên không có
+`response-started` nào giữa các mảnh để đối chứng. Cần kiểm chứng lại khi
+làm lớp tích hợp thật (system prompt + tool `confirm_danh_bo` của 6b).
+
+Test: `src/call-flow/danh-bo-readback-match.js` +
+`test/danh-bo-readback-match.test.mjs` sửa lại, dùng ĐÚNG dữ liệu thật ở
+bảng trên (thay vì fixture bịa). 251/251 (local, không đổi số lượng - thay
+7 test cũ bằng 7 test mới cho matcher).

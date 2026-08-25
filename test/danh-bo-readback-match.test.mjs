@@ -20,81 +20,105 @@ import { createReadbackMatcher, resolveConfirmDanhBo } from "../src/call-flow/da
 const AI_READBACK_TEXT =
   "Dạ, mã danh bộ của Quý Khách là Hai - Hai - Không - Hai - Ba - Hai - Năm - Một - Bảy - Bảy - Năm. Quý Khách xác nhận giúp em có đúng không ạ?";
 
-// ─── createReadbackMatcher (Buoc 1: khop cap theo thu tu) ───
+// ─── createReadbackMatcher (Buoc 1: khop cap theo thu tu, GOM nhieu manh) ───
+//
+// [25/08/2026] 3 test dung DU LIEU THAT, copy nguyen tu 3 lan chay
+// scripts/probe-confirm-danh-bo.mjs (chu du an tu ghi am, dan lai nguyen
+// van console output) - xem docs/fix/giai_doan_6b_dinh_chinh_pairing_
+// previous_item_id_20260824.md muc "Cap nhat 25/08/2026". itemId rut gon
+// (item_u1/u2/...) thay cho id that (item_EGaf...) de de doc, THU TU va
+// NOI DUNG text giu NGUYEN VAN.
 
 test("chua arm(): handleSignal khong lam gi, getResult() luon null", () => {
   const m = createReadbackMatcher();
   assert.equal(m.isArmed(), false);
   m.handleSignal({ kind: "user-item-added", itemId: "item_u1" });
   m.handleSignal({ kind: "transcript-ready", itemId: "item_u1", text: "Dạ đúng rồi ạ" });
+  m.handleSignal({ kind: "response-started", responseId: "resp_1" });
   assert.equal(m.getResult(), null);
 });
 
-test("arm() roi khop dung: user-item-added truoc, transcript-ready cung itemId sau -> getResult() tra ve dung cap", () => {
+test("[du lieu that #1 - 6b_xac_nhan_ngat_quang.wav, 1 manh duy nhat] khop dung, khong bi tach", () => {
   const m = createReadbackMatcher();
   m.arm(AI_READBACK_TEXT);
   assert.equal(m.isArmed(), true);
   assert.equal(m.getReadbackText(), AI_READBACK_TEXT);
 
-  // Tin hieu xen giua (dung that theo bang moc thoi gian trong docs/fix -
-  // response-ended cua chinh luot AI doc lai den truoc item cua khach) bi
-  // bo qua co y, khong lam gian doan.
+  // Tin hieu xen giua (response-ended cua chinh luot AI doc lai) bi bo qua
+  // co y, khong lam gian doan.
   m.handleSignal({ kind: "response-ended", responseId: "resp_1", status: "completed" });
   assert.equal(m.getResult(), null);
 
   m.handleSignal({ kind: "user-item-added", itemId: "item_u1" });
-  assert.equal(m.getPendingItemId(), "item_u1");
-  assert.equal(m.getResult(), null, "moi co item, CHUA co transcript - chua duoc tinh la khop");
+  assert.equal(m.getResult(), null, "moi co item, CHUA dung (chua thay response-started) - chua ket luan");
 
-  m.handleSignal({ kind: "transcript-ready", itemId: "item_u1", text: "Dạ đúng rồi ạ" });
-  assert.deepEqual(m.getResult(), { itemId: "item_u1", text: "Dạ đúng rồi ạ" });
+  m.handleSignal({ kind: "transcript-ready", itemId: "item_u1", text: "Dạ, để em xem lại đã. Dạ, đúng rồi ạ." });
+  assert.equal(m.getResult(), null, "da co transcript nhung CHUA dung - van co the con manh nua dang toi");
+
+  m.handleSignal({ kind: "response-started", responseId: "resp_2" });
+  assert.deepEqual(m.getResult(), { itemIds: ["item_u1"], text: "Dạ, để em xem lại đã. Dạ, đúng rồi ạ." });
 });
 
-test("transcript-ready itemId KHONG trung voi user-item-added dang cho -> khong khop, cho tiep", () => {
+test("[du lieu that #2 - 6b_dung_roi_ngap_ngung_noise1.wav, 4 manh] gom DU 4 manh, noi lai dung thu tu", () => {
   const m = createReadbackMatcher();
   m.arm(AI_READBACK_TEXT);
+
   m.handleSignal({ kind: "user-item-added", itemId: "item_u1" });
-  // itemId lech (vd du lieu khac luong, phong thu) - khong duoc khop nham.
-  m.handleSignal({ kind: "transcript-ready", itemId: "item_KHAC", text: "noi dung khac" });
-  assert.equal(m.getResult(), null);
-
-  m.handleSignal({ kind: "transcript-ready", itemId: "item_u1", text: "Dạ đúng rồi ạ" });
-  assert.deepEqual(m.getResult(), { itemId: "item_u1", text: "Dạ đúng rồi ạ" });
-});
-
-test("transcript-ready den TRUOC ca user-item-added nao -> bi bo qua (chua co pendingItemId de doi chieu)", () => {
-  const m = createReadbackMatcher();
-  m.arm(AI_READBACK_TEXT);
-  m.handleSignal({ kind: "transcript-ready", itemId: "item_u1", text: "den qua som" });
-  assert.equal(m.getResult(), null);
-  assert.equal(m.getPendingItemId(), null);
-});
-
-test("nhieu user-item-added lien tiep (vd tap am/nhieu manh) - CHI item DAU TIEN sau arm duoc dung (chua co bang chung that cho truong hop khac, xem chu thich dau file)", () => {
-  const m = createReadbackMatcher();
-  m.arm(AI_READBACK_TEXT);
-  m.handleSignal({ kind: "user-item-added", itemId: "item_u1" });
-  m.handleSignal({ kind: "user-item-added", itemId: "item_u2" });
-  assert.equal(m.getPendingItemId(), "item_u1", "van giu item DAU TIEN, khong bi item thu 2 ghi de");
-
-  // transcript cua item THU HAI khong duoc tinh la khop, vi dang cho item dau tien.
-  m.handleSignal({ kind: "transcript-ready", itemId: "item_u2", text: "cua item thu hai" });
-  assert.equal(m.getResult(), null);
-
-  m.handleSignal({ kind: "transcript-ready", itemId: "item_u1", text: "cua item dau tien" });
-  assert.deepEqual(m.getResult(), { itemId: "item_u1", text: "cua item dau tien" });
-});
-
-test("da co ket qua roi thi handleSignal() tiep theo khong ghi de nua", () => {
-  const m = createReadbackMatcher();
-  m.arm(AI_READBACK_TEXT);
-  m.handleSignal({ kind: "user-item-added", itemId: "item_u1" });
-  m.handleSignal({ kind: "transcript-ready", itemId: "item_u1", text: "dau tien" });
-  assert.deepEqual(m.getResult(), { itemId: "item_u1", text: "dau tien" });
+  m.handleSignal({ kind: "transcript-ready", itemId: "item_u1", text: "À để kiểm tra xíu." });
+  assert.equal(m.getResult(), null, "moi 1/4 manh, chua dung - KHONG duoc ket luan som (day chinh la bug 24/08/2026 da sua)");
 
   m.handleSignal({ kind: "user-item-added", itemId: "item_u2" });
-  m.handleSignal({ kind: "transcript-ready", itemId: "item_u2", text: "sau do, khong lien quan" });
-  assert.deepEqual(m.getResult(), { itemId: "item_u1", text: "dau tien" }, "ket qua giu nguyen, khong bi lan sau ghi de");
+  m.handleSignal({ kind: "transcript-ready", itemId: "item_u2", text: "Vâng ạ." });
+  m.handleSignal({ kind: "user-item-added", itemId: "item_u3" });
+  m.handleSignal({ kind: "transcript-ready", itemId: "item_u3", text: "À, đúng rồi." });
+  m.handleSignal({ kind: "user-item-added", itemId: "item_u4" });
+  m.handleSignal({ kind: "transcript-ready", itemId: "item_u4", text: "Hóa đơn." });
+  assert.equal(m.getResult(), null, "da co ca 4 manh nhung CHUA thay response-started - van chua duoc coi la 'het'");
+
+  m.handleSignal({ kind: "response-started", responseId: "resp_2" });
+  assert.deepEqual(m.getResult(), {
+    itemIds: ["item_u1", "item_u2", "item_u3", "item_u4"],
+    text: "À để kiểm tra xíu. Vâng ạ. À, đúng rồi. Hóa đơn.",
+  });
+});
+
+test("[du lieu that #3 - 6b_dung_roi_ngap_ngung_noise2.wav, 2 manh] gom du 2 manh - transcript manh cuoi den SAU response-started van duoc tinh (dung thu tu bat dong bo da ghi nhan o Giai doan 1)", () => {
+  const m = createReadbackMatcher();
+  m.arm(AI_READBACK_TEXT);
+
+  m.handleSignal({ kind: "user-item-added", itemId: "item_u1" });
+  m.handleSignal({ kind: "transcript-ready", itemId: "item_u1", text: "À" });
+  m.handleSignal({ kind: "user-item-added", itemId: "item_u2" });
+  // response-started den TRUOC transcript cua manh thu 2 (mo phong dung do
+  // that o Giai doan 1: transcript co the den SAU response.created).
+  m.handleSignal({ kind: "response-started", responseId: "resp_2" });
+  assert.equal(m.getResult(), null, "da 'dung' nhung item_u2 CHUA co transcript - phai cho, KHONG duoc chot thieu");
+
+  m.handleSignal({ kind: "transcript-ready", itemId: "item_u2", text: "Để xem lại nha." });
+  assert.deepEqual(m.getResult(), { itemIds: ["item_u1", "item_u2"], text: "À Để xem lại nha." });
+});
+
+test("user-item-added den SAU 'response-started' (AI da bat dau luot ke tiep) bi bo qua, khong gom nham vao luot tra loi cu", () => {
+  const m = createReadbackMatcher();
+  m.arm(AI_READBACK_TEXT);
+  m.handleSignal({ kind: "user-item-added", itemId: "item_u1" });
+  m.handleSignal({ kind: "transcript-ready", itemId: "item_u1", text: "đúng rồi ạ" });
+  m.handleSignal({ kind: "response-started", responseId: "resp_2" });
+  assert.deepEqual(m.getResult(), { itemIds: ["item_u1"], text: "đúng rồi ạ" });
+
+  // Item MOI (vd khach noi chen/barge-in luot AI tiep theo) den SAU khi da
+  // chot - KHONG duoc lam thay doi ket qua da co.
+  m.handleSignal({ kind: "user-item-added", itemId: "item_u2" });
+  m.handleSignal({ kind: "transcript-ready", itemId: "item_u2", text: "khong lien quan" });
+  assert.deepEqual(m.getResult(), { itemIds: ["item_u1"], text: "đúng rồi ạ" }, "ket qua giu nguyen");
+});
+
+test("khong co manh nao ca ma da 'response-started' -> getResult() van null (khong the ket luan tu tap rong)", () => {
+  const m = createReadbackMatcher();
+  m.arm(AI_READBACK_TEXT);
+  m.handleSignal({ kind: "response-started", responseId: "resp_2" });
+  assert.equal(m.isStopped(), true);
+  assert.equal(m.getResult(), null);
 });
 
 test("arm() lai (lan doc lai MOI) reset toan bo state cu - dung vong doi 1 phien/1 lan doc, giong createDanhBoSession()", () => {
@@ -102,11 +126,13 @@ test("arm() lai (lan doc lai MOI) reset toan bo state cu - dung vong doi 1 phien
   m.arm("cau doc lai lan 1");
   m.handleSignal({ kind: "user-item-added", itemId: "item_u1" });
   m.handleSignal({ kind: "transcript-ready", itemId: "item_u1", text: "sai roi" });
+  m.handleSignal({ kind: "response-started", responseId: "resp_x" });
   assert.notEqual(m.getResult(), null);
 
   m.arm("cau doc lai lan 2");
   assert.equal(m.getResult(), null, "arm() lai phai xoa ket qua cu");
-  assert.equal(m.getPendingItemId(), null);
+  assert.equal(m.isStopped(), false);
+  assert.deepEqual(m.getItemIds(), []);
   assert.equal(m.getReadbackText(), "cau doc lai lan 2");
 });
 

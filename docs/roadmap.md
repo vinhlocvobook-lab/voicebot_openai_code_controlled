@@ -757,6 +757,21 @@ cho cả lộ trình này:
   "không kết luận được" đầy đủ - phụ thuộc watchdog Giai đoạn 7), bước 2.5
   (trọng tài gpt-5.1). Test: 251/251 (local), 266/266 (máy chủ dự án).
 
+  **Cập nhật 25/08/2026 - đã trả lời câu hỏi "khách trả lời NGẮT QUÃNG"
+  (chủ dự án hỏi trực tiếp, đã kiểm chứng bằng audio THẬT tự ghi âm)**:
+  xem `docs/fix/giai_doan_6b_dinh_chinh_pairing_previous_item_id_20260824.md`
+  mục "Cập nhật 25/08/2026" để biết đầy đủ bằng chứng. Tóm tắt: `previous_
+  item_id` trên `input_audio_buffer.committed` (KHÁC event với cái đã đính
+  chính ở bước 1 trên, KHÔNG mâu thuẫn - đây là việc nối các mảnh CỦA CÙNG
+  1 lượt nói, khác việc ghép cặp KHÁC VAI) THẬT SỰ dùng được, xác nhận
+  bằng 2 file khách tự ghi âm có khoảng ngừng rõ (4 mảnh và 2 mảnh, previous_
+  item_id nối đúng 100% cả 2 lần). Lộ ra `createReadbackMatcher()` (viết
+  24/08/2026) SAI - chỉ lấy mảnh đầu, bỏ sót phần "đúng"/"sai" nếu nó nằm ở
+  mảnh sau. ĐÃ SỬA: gom TOÀN BỘ mảnh tới khi thấy tín hiệu `"response-
+  started"` (điểm dừng - CHƯA được probe xác nhận trực tiếp, chỉ là giả
+  định hợp lý, ghi rõ trong code). Test cập nhật dùng đúng dữ liệu thật 3
+  lần chạy, 251/251 (local, không đổi số lượng test).
+
 - [ ] **Giai đoạn 7 - `src/session/watchdogs.js`.** Lưới an toàn dùng
   chung (mute watchdog, vad-restore watchdog). Test giả lập tình huống
   "quên trigger response" để xác nhận watchdog cứu được.
