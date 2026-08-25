@@ -61,15 +61,29 @@
 //     transcript-ready la khach dang doc so - watchdog chung (90s, da co)
 //     la luoi an toan cuoi neu vi ly do gi session.updated khong bao gio
 //     ve (khong can them 1 timer rieng cho truong hop hiem nay).
+//   - conversation.item.added, CHI khi item.role === "user" (Giai doan 6b,
+//     24/08/2026 - xem docs/roadmap.md muc "Giai doan 6b" va
+//     scripts/probe-confirm-danh-bo.mjs). Thiet ke goc cua Giai doan 6b
+//     (21/08/2026) dinh dung field `previous_item_id` cua item KHACH de ghep
+//     dung cap voi luot AI doc lai so - chay THAT (probe-confirm-danh-bo.mjs)
+//     cho thay `previous_item_id` KHONG TON TAI tren
+//     conversation.item.input_audio_transcription.completed, va tren item
+//     cua conversation.item.added/done chi co item.id (khong co
+//     previous_item_id). Du lieu that (moc thoi gian tuyet doi trong log
+//     .jsonl cua probe) cho thay conversation.item.added (role:"user") cua
+//     khach LUON den SAU conversation.item.done (role:"assistant") cua luot
+//     AI doc lai, khong xen ke - nen THU TU (khong phai previous_item_id)
+//     moi la co che dung de ghep cap. Item role "assistant" khong can chuan
+//     hoa o day (da co "ai-said" o tren roi) nen van roi vao "ignored".
 // Event nao chua gap/chua can dung se roi vao nhanh "ignored" - khong lam
 // crash, chi bao hieu "chua xu ly", de call-flow tu quyet dinh co bo qua
 // that hay khong. Cac event khac lien quan tool-call quan sat duoc o Giai
 // doan 5a (response.output_item.added/done, response.function_call_
 // arguments.delta, response.output_audio.*, response.output_audio_
 // transcript.delta [chi .delta - .done da chuan hoa thanh ai-said o tren],
-// response.content_part.*, conversation.item.added/done, rate_limits.
-// updated) CO CHU DICH roi vao "ignored" - chua co nhu cau dung toi,
-// khong phai bo sot.
+// response.content_part.*, conversation.item.done, conversation.item.added
+// [role != "user"], rate_limits.updated) CO CHU DICH roi vao "ignored" -
+// chua co nhu cau dung toi, khong phai bo sot.
 
 export function normalizeTurnEvent(rawEvent) {
   if (!rawEvent || typeof rawEvent.type !== "string") {
@@ -139,6 +153,20 @@ export function normalizeTurnEvent(rawEvent) {
     // roi vao "ignored" cung nhom voi session.created.
     case "session.updated":
       return { kind: "session-updated" };
+
+    // [bo sung 24/08/2026, Giai doan 6b] Xem chu thich dau file - truoc day
+    // roi vao "ignored" cung nhom voi conversation.item.done. Chi chuan hoa
+    // item cua KHACH (role: "user") - item cua AI khong can, da co "ai-said"
+    // roi. Dung de danh-bo-flow.js (Giai doan 6b, dang viet) biet "vua co 1
+    // luot tra loi MOI cua khach" va ghep cap THEO THU TU voi luot AI doc lai
+    // so ngay truoc do (xem ly do o chu thich dau file - previous_item_id
+    // KHONG dung duoc).
+    case "conversation.item.added": {
+      if (rawEvent.item?.role === "user") {
+        return { kind: "user-item-added", itemId: rawEvent.item?.id ?? null };
+      }
+      return { kind: "ignored", rawType: rawEvent.type };
+    }
 
     default:
       return { kind: "ignored", rawType: rawEvent.type };

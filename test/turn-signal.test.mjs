@@ -202,9 +202,13 @@ test("[Giai doan 5a] replay fixture tool-call that: chi dung 1 tin hieu tool-cal
   // [23/08/2026] them 1 dong response.output_audio_transcript.done that
   // vao fixture (loi AI noi "commentary" truoc tool-call) -> them 1 tin
   // hieu ai-said, ignored giu nguyen 9 (dong them KHONG roi vao ignored).
+  // [24/08/2026, Giai doan 6b] conversation.item.added (role:"user") trong
+  // fixture nay nay da duoc chuan hoa rieng thanh "user-item-added" (xem chu
+  // thich dau turn-signal.js) - ignored giam tu 8 xuong 7.
   assert.deepEqual(tally, {
-    ignored: 8, // session.created, conversation.item.added, 2x output_item.added, function_call_arguments.delta, 2x output_item.done, rate_limits.updated
+    ignored: 7, // session.created, 2x output_item.added, function_call_arguments.delta, 2x output_item.done, rate_limits.updated
     "session-updated": 1, // session.updated - nay da chuan hoa rieng, xem test tren
+    "user-item-added": 1, // conversation.item.added (role:"user") - nay da chuan hoa rieng, xem test duoi
     "response-started": 1,
     "ai-said": 1,
     "tool-call-requested": 1,
@@ -220,6 +224,46 @@ test("[Giai doan 5a] replay fixture tool-call that: chi dung 1 tin hieu tool-cal
     name: "get_bill",
     arguments: '{"ma_danh_bo":"22082351775","ky":8,"nam":2026}',
   });
+});
+
+test("[Giai doan 6b, 24/08/2026] conversation.item.added (role:user) duoc chuan hoa thanh user-item-added, role khac van ignored", () => {
+  // Event that, copy nguyen tu test/fixtures/tool-call-events.jsonl (dong
+  // 3, logs/probe-tool-call-1787384731754.jsonl goc) - khong bia du lieu.
+  // Xem chu thich dau turn-signal.js: previous_item_id KHONG ton tai tren
+  // event nay (da xac nhan that qua scripts/probe-confirm-danh-bo.mjs), chi
+  // co item.id - nen chi lay itemId, khong lay previousItemId.
+  assert.deepEqual(
+    normalizeTurnEvent({
+      type: "conversation.item.added",
+      event_id: "event_EFahxBNUxsrnzDhl5CIjL",
+      previous_item_id: null,
+      item: {
+        id: "item_EFahxYv8XRT2C4Ia8Zby1",
+        type: "message",
+        status: "completed",
+        role: "user",
+        content: [{ type: "input_text", text: "Xin chao, cho toi hoi hoa don tien nuoc thang nay voi. Ma danh bo cua toi la 22082351775." }],
+      },
+    }),
+    { kind: "user-item-added", itemId: "item_EFahxYv8XRT2C4Ia8Zby1" },
+  );
+
+  // role "assistant" (vd luot AI doc lai so trong Giai doan 6b) KHONG chuan
+  // hoa - da co "ai-said" roi, giu nguyen ignored nhu truoc day.
+  assert.deepEqual(
+    normalizeTurnEvent({
+      type: "conversation.item.added",
+      previous_item_id: "item_prev",
+      item: { id: "item_ai_1", type: "message", status: "in_progress", role: "assistant", content: [] },
+    }),
+    { kind: "ignored", rawType: "conversation.item.added" },
+  );
+
+  // item.id thieu (truong hop la, phong thu) khong duoc crash.
+  assert.deepEqual(
+    normalizeTurnEvent({ type: "conversation.item.added", item: { role: "user" } }),
+    { kind: "user-item-added", itemId: null },
+  );
 });
 
 test("ghep transcript qua nhieu manh (mo phong logic Giai doan 6 se can) cho ra dung cau goc", () => {

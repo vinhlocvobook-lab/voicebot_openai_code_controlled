@@ -651,9 +651,26 @@ cho cả lộ trình này:
      `response.output_audio_transcript...` - tin cậy cao vì là text gốc
      điều khiển TTS, KHÔNG phải kết quả ASR) với "câu khách trả lời ngay
      sau đó" (`conversation.item.input_audio_transcription.completed`),
-     dùng `previous_item_id`/thứ tự item để khớp ĐÚNG CẶP, không chỉ lấy
-     "N event gần nhất" (tránh khớp nhầm do độ trễ bất đồng bộ đã ghi
-     nhận ở Giai đoạn 1 - transcript có thể đến sau `response.created`).
+     dùng THỨ TỰ ITEM để khớp ĐÚNG CẶP, không chỉ lấy "N event gần nhất"
+     (tránh khớp nhầm do độ trễ bất đồng bộ đã ghi nhận ở Giai đoạn 1 -
+     transcript có thể đến sau `response.created`).
+     **Đính chính 24/08/2026** (xem `docs/fix/giai_doan_6b_dinh_chinh_
+     pairing_previous_item_id_20260824.md`): câu trên VIẾT SAI khi đề xuất
+     ngày 21/08/2026 - đã ĐOÁN là dùng được field `previous_item_id`, CHƯA
+     chạy thật để kiểm chứng. Chạy thật `scripts/probe-confirm-danh-bo.mjs`
+     (API thật) cho thấy `previous_item_id` KHÔNG TỒN TẠI trên
+     `conversation.item.input_audio_transcription.completed`, và trên
+     `item` của `conversation.item.added`/`.done` chỉ có `item.id`, không
+     có `previous_item_id`. Cơ chế ĐÚNG (đã xác nhận bằng mốc thời gian
+     thật trong log .jsonl của probe): `conversation.item.added`
+     (`role:"user"`) của khách LUÔN đến SAU `conversation.item.done`
+     (`role:"assistant"`) của lượt AI đọc lại, không xen kẽ - nên khớp
+     cặp bằng THỨ TỰ đến (item khách gần nhất sau lượt AI đọc lại), rồi
+     đối chiếu chéo `item.id` đó với `item_id` của
+     `conversation.item.input_audio_transcription.completed` khi transcript
+     sẵn sàng. `src/session/turn-signal.js` đã chuẩn hoá
+     `conversation.item.added` (`role:"user"`) thành tín hiệu
+     `"user-item-added"` (giữ `itemId`) để phục vụ đúng cơ chế này.
   2. Trích số từ chính câu model đọc lại (parse text model tự sinh ra -
      dễ hơn nhiều so với parse ASR, vì là chuỗi xác định chứ không phải
      audio) và xác định khách có xác nhận "đúng" hay không (dùng lại bộ
@@ -709,6 +726,20 @@ cho cả lộ trình này:
 
   Test từng matcher/cơ chế đối chiếu bằng fixture transcript riêng lẻ,
   rồi mới test tích hợp qua harness của Giai đoạn 1.
+
+  **Cập nhật 24/08/2026 - bắt đầu triển khai (nhánh
+  `giai-doan-6b-model-collection`)**: rà soát lại thiết kế trên trước khi
+  viết code (theo đúng nguyên tắc "hiểu và kiểm soát trước") - phát hiện
+  bước 1 dựa vào `previous_item_id`, một field CHƯA từng được kiểm chứng
+  thật. Chạy `scripts/probe-confirm-danh-bo.mjs` (probe thật, không đoán)
+  xác nhận field đó không tồn tại trên các event liên quan, tìm ra cơ chế
+  đúng (khớp cặp theo THỨ TỰ item) - xem đính chính ở bước 1 trên và
+  `docs/fix/giai_doan_6b_dinh_chinh_pairing_previous_item_id_20260824.md`.
+  Đã chuẩn hoá nền tảng cho cơ chế này: `src/session/turn-signal.js` thêm
+  tín hiệu `"user-item-added"` (từ `conversation.item.added`,
+  `role:"user"`). Test: 238/238 (local), 253/253 (máy chủ dự án). Bước
+  tiếp theo: viết các hàm matcher thuần (khớp cặp, trích số từ câu model
+  đọc lại, so sánh) theo đúng thứ tự đã ghi ở trên.
 
 - [ ] **Giai đoạn 7 - `src/session/watchdogs.js`.** Lưới an toàn dùng
   chung (mute watchdog, vad-restore watchdog). Test giả lập tình huống
