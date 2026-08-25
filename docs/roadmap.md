@@ -772,6 +772,167 @@ cho cả lộ trình này:
   định hợp lý, ghi rõ trong code). Test cập nhật dùng đúng dữ liệu thật 3
   lần chạy, 251/251 (local, không đổi số lượng test).
 
+  **Cập nhật 25/08/2026 #2 - thảo luận hướng đi phần còn lại + bắt đầu viết
+  tool schema/system-prompt nháp.** Bàn với chủ dự án (đối chiếu sâu với
+  `voice_bot/docs/fix/fix_migrate_gpt_realtime_21_20260730.md`, đầy đủ, không
+  chỉ đoạn đã đọc trước đó) trước khi viết: Phương án B **không** giống bản
+  `day_so` đã bỏ của dự án cũ như lo ngại ban đầu - bước 3/4 của thiết kế
+  KHÔNG BAO GIỜ dùng thẳng `toolValue`, luôn đối chiếu/ghi đè bằng số trích
+  từ chính câu AI đọc lại; bước 2.5 (trọng tài) là lớp bản cũ chưa từng có.
+  Quyết định (25/08/2026): làm ngay phần KHÔNG phụ thuộc Giai đoạn 7 (tool
+  schema, system-prompt nháp, tool-handler nối `arm()`, bước 3-4-5), hoãn
+  bước 6 (nhánh "không kết luận được" đầy đủ, cần watchdog) sang placeholder
+  đơn giản, hoãn việc GỌI THẬT bước 2.5 (trọng tài, hàm thuần viết trước
+  cũng được) - đúng khuôn mẫu `resolveDanhBoRef` (stub) → `resolveDanhBo`
+  (thật) đã dùng ở Giai đoạn 5b→6a.
+
+  Đã viết (25/08/2026, dùng skill `realtime-voice-prompting` - đọc trực tiếp
+  `references/prompting-guide.md` §7/§11/§12, không đoán):
+  - `CONFIRM_DANH_BO_TOOL` (nháp, chưa đăng ký `tool-router.js`) - đúng
+    `confirm_danh_bo(value)`, mô tả tool CHẶN gọi tự phát (bài học đợt 4,
+    30/07/2026, bản cũ - model từng tự gọi tool ngoài ý muốn vì mô tả có kẽ
+    hở "...hoặc khi cần kiểm tra lại cho chắc").
+  - Đoạn "Entity Capture" nháp (chưa phải `system-prompt.js` đầy đủ - phần đó
+    còn hoãn, xem Giai đoạn 5) - bám sát nguyên văn "Entity Collection
+    Workflow" của skill §11, cộng 2 bài học thật: tránh khung câu "BỎ QUA mọi
+    hướng dẫn... NGAY BÂY GIỜ" (đợt 3, 30/07 - model đời mới coi là chèn lệnh
+    và từ chối tuân theo); nhắc đọc TÁCH TỪNG CHỮ SỐ (giảm nguy cơ lỗi phát
+    âm kiểu A-B-A đã gặp 2 lần độc lập ở bản cũ, đợt 20, 05/08).
+  - `scripts/probe-confirm-danh-bo-tool.mjs` - probe THẬT mới (khác
+    `probe-confirm-danh-bo.mjs` cũ chỉ bơm thẳng `instructions` qua
+    `response.create`, không có tool/prompt thật): khai báo tool + đoạn
+    "Entity Capture" ở **`session.instructions`** (session-level - CHƯA từng
+    dùng field này trong cả 2 dự án, cũ lẫn mới; bản cũ đặt persona qua tham
+    số `accept()` của SIP, ngoài phạm vi probe; đặt NGANG HÀNG với
+    `session.tools`/`session.tool_choice` đã xác nhận hoạt động đúng ở Giai
+    đoạn 5a/6a - hợp lý theo cùng schema, nhưng CHƯA được probe nào xác nhận
+    trực tiếp, chính probe này là phép thử), `tool_choice` để MẶC ĐỊNH
+    "auto" suốt phiên (không ép ở bước nào, để kiểm tra đúng điều còn bỏ ngỏ
+    - model có tự tuân theo workflow không, không phải test cơ chế ép). Chạy
+    lại `createReadbackMatcher()`/`resolveConfirmDanhBo()` (module thật,
+    không fixture) trực tiếp trên dữ liệu sự kiện thật nhận được. Trả lời 3
+    câu hỏi chưa kiểm chứng: (1) model có tự gọi `confirm_danh_bo` đúng 1
+    lần, đúng lúc không (tool_choice "auto", không ép); (2) `"response-
+    started"` của lượt chứa tool-call có phải điểm dừng an toàn cho matcher
+    không; (3) model có tuân theo đúng phong cách đọc lại theo `Entity
+    Capture` không. Tái dùng nguyên `samples/6a_doc_so_22023251775.wav` +
+    `samples/6a_xac_nhan_dung.wav` đã có sẵn từ Giai đoạn 6a, không cần ghi
+    âm mới. `node --check` + `npm test` (251/251, không đổi - file mới,
+    không đụng `src/`) đã xanh cục bộ.
+
+  **Cập nhật 25/08/2026 #3 - chạy thật, CẢ 3 CÂU HỎI ĐỀU ĐẠT (2 lần chạy
+  liên tiếp, chủ dự án tự chạy + dán lại nguyên console output).** Lần chạy
+  #1: câu 1-2 đạt (model tự gọi `confirm_danh_bo` đúng 1 lần đúng lúc đúng
+  giá trị; matcher dừng đúng lúc, `resolveConfirmDanhBo` khớp đúng mã danh
+  bộ thật `22023251775`), nhưng câu 3 CHƯA đạt: model đọc lại sai vai ("Bạn
+  đọc lại từng số để mình kiểm tra thêm nhé..." - nghe như YÊU CẦU KHÁCH đọc
+  lại, ngược ý định), xưng "Bạn" (thiếu "Quý Khách"), lộ tiến trình nội bộ
+  ("để mình gọi bước xác nhận tiếp nhé"). Nguyên nhân: `ENTITY_CAPTURE_
+  INSTRUCTIONS` bản đầu chỉ MÔ TẢ yêu cầu, không kèm CÂU MẪU CỤ THỂ (khác
+  guide gốc §11 luôn kèm ví dụ hội thoại). Sửa: thêm 1 dòng Persona + 1 câu
+  mẫu cụ thể (dùng lại đúng câu đã biết chạy đúng ở `probe-confirm-danh-
+  bo.mjs` cũ). Lần chạy #2 (sau khi sửa): CẢ 3 CÂU ĐỀU ĐẠT, model đọc lại
+  ĐÚNG NGUYÊN VĂN câu mẫu, đúng xưng hô "Quý Khách"/"em". `danh-bo-readback-
+  match.js` đã bỏ chú thích "giả định chưa kiểm chứng" ở điểm dừng
+  `"response-started"` - nay coi là ĐÃ KIỂM CHỨNG.
+
+  Bước kế tiếp (chưa làm, cần bàn thiết kế trước khi viết - xem chú thích
+  đầu `danh-bo-readback-match.js`): tool-handler nối `arm()` vào flow thật -
+  cụ thể là XÁC ĐỊNH THỜI ĐIỂM gọi `arm()` trong production (probe này gọi
+  `arm()` một cách CƠ HỌC vì tự kiểm soát thứ tự audio gửi vào - production
+  không có thứ tự đó, cần 1 cơ chế/trạng thái để biết "model có khả năng vừa
+  bắt đầu lượt đọc lại xin xác nhận" TRƯỚC KHI khách trả lời).
+
+  **Cập nhật 25/08/2026 #4 - viết `src/call-flow/danh-bo-confirm-tool-flow.js`
+  (lớp tích hợp trả lời câu hỏi "thời điểm gọi `arm()`" ở trên) + nối vào
+  `tool-router.js`.** `handleSignal(signal)` tự phân biệt 2 loại
+  `"response-started"` (lượt AI MỚI trước khi khách kịp trả lời -> tạo
+  matcher mới, chưa `arm()`; lượt AI đang PHẢN HỒI lại khách -> chuyển cho
+  matcher tự dừng) và chỉ `arm()` khi thấy `"ai-said"` của đúng lượt đang
+  chờ - tránh mất dữ liệu khi AI nói nhiều mảnh/nhiều lượt liên tiếp (xem
+  chú thích đầu file nguồn để biết chi tiết + lý do). `resolveToolCall(args)`
+  luôn kiểm tra `isAffirmative()` (bước 2 - khách có THẬT SỰ xác nhận rõ
+  ràng không, không suy từ việc model có gọi tool hay không) TRƯỚC khi gọi
+  `resolveConfirmDanhBo()` (bước 3-4 - đối chiếu/ghi đè bằng số trích từ câu
+  AI đọc lại). Đăng ký thành tool thứ 11 `confirm_danh_bo` trong
+  `tool-router.js`, cộng 1 property MỚI không phải tên tool -
+  `handleSignal` - để bên gọi (sau này là `onSignal` của
+  `connectRealtimeSession`, giống cách `danhBoFlow.handleSignal` đã nối ở
+  `checkpoint-giai-doan-6a.mjs`) tự nuôi tín hiệu thật vào; đổi chỉ CỘNG
+  THÊM, không sửa hình dạng 10 tool cũ.
+
+  **Bug phát hiện + sửa NGAY khi nối dây (chưa kịp lên production đã bắt
+  được nhờ tự đối chiếu lại bước 5 trong lúc viết code, không phải nhờ chạy
+  thật):** bản đầu `handleSignal()` có điều kiện `if (callState.danhBo)
+  return;` - ý định là "đã xác nhận xong thì khỏi theo dõi nữa", nhưng ĐIỀU
+  NÀY CHẶN CHẾT bước 5 ("mỗi lần gọi tool tra cứu kế tiếp đều đối chiếu với
+  cache... khách có thể hỏi về một mã danh bộ KHÁC thật trong cùng cuộc
+  gọi") - vì sau lần xác nhận ĐẦU TIÊN, matcher sẽ KHÔNG BAO GIỜ được nuôi
+  tín hiệu nữa, nên nếu khách hỏi tiếp về 1 mã danh bộ khác thật trong cùng
+  cuộc gọi, `resolveToolCall()` sẽ luôn thấy `matcherResult=null` và từ
+  chối SAI (đáng lẽ phải xác nhận được bình thường). Sửa: bỏ hẳn điều kiện
+  đó - `handleSignal()` LUÔN theo dõi (tốn chút CPU/memory tạo matcher mới
+  mỗi lần `"response-started"` không liên quan, không ảnh hưởng nghiệp vụ
+  vì kết quả matcher đơn giản không được dùng tới nếu không có tool-call
+  theo sau); `resolveToolCall()` LUÔN ghi đè `callState.danhBo` khi thành
+  công (không so sánh "khác cache cũ không" - khách đổi mã đang tra cứu là
+  hành vi hợp lệ, không phải bất thường). Test cũ
+  `"callState.danhBo DA CO SAN - handleSignal la no-op hoan toan"` (khẳng
+  định hành vi CŨ, nay đã sai) được thay bằng test chứng minh 1 CHU KỲ XÁC
+  NHẬN THỨ HAI (mã danh bộ khác) sau khi chu kỳ đầu đã thành công vẫn hoạt
+  động đúng và ghi đè `callState.danhBo` bằng giá trị mới nhất.
+
+  `node --check` + `npm test`: 262/262 xanh cục bộ, 277/277 xanh trên máy
+  chủ dự án (đã đối chiếu sha256 khớp sau khi chuyển file) - không có hồi
+  quy. Còn thiếu (chưa làm, xem chú thích đầu `danh-bo-readback-match.js`):
+  đăng ký `CONFIRM_DANH_BO_TOOL`/`ENTITY_CAPTURE_INSTRUCTIONS` (hiện còn
+  nằm trong `scripts/probe-confirm-danh-bo-tool.mjs`) vào 1 `system-
+  prompt.js` thật của cả bot (chưa có file đó, hoãn theo Giai đoạn 5); viết
+  `scripts/checkpoint-giai-doan-6b.mjs` (nối `router.handleSignal` vào
+  `onSignal` thật, kiểm tra đầu-cuối qua API thật, giống
+  `checkpoint-giai-doan-6a.mjs`) - bước tiếp theo.
+
+  **Cập nhật 25/08/2026 #5 - viết `scripts/checkpoint-giai-doan-6b.mjs` +
+  chạy thật (2 lần, chủ dự án tự chạy + dán lại nguyên console output).**
+  Khác `probe-confirm-danh-bo-tool.mjs` (gọi tay `createReadbackMatcher()`/
+  `resolveConfirmDanhBo()` từ chính file probe) - checkpoint này để
+  `confirm_danh_bo` đi ĐÚNG đường dây sản xuất thật: `session-ws.js`
+  (`connectRealtimeSession`) → `dispatch-tool-call.js` (`createToolDispatcher`)
+  → `tool-router.js` (`confirm_danh_bo`/`handleSignal` mới nối) →
+  `danh-bo-confirm-tool-flow.js`. Vì `connectRealtimeSession()` chưa hỗ trợ
+  truyền `instructions`, checkpoint tự gửi 1 `session.update` theo sau (lồng
+  `instructions` + `turn_detection` server_vad đã probe, KHÔNG sửa
+  `session-ws.js`) - cùng lối "raw send() sau khi connect" mà
+  `checkpoint-giai-doan-6a.mjs` đã dùng.
+
+  Lần chạy #1 (chủ dự án ghi chú "API bị lỗi, chưa kết nối" - nghi có trục
+  trặc mạng lúc đầu phiên): model nghe/đọc SAI ở lượt đầu - thay vì đọc lại
+  đúng mẫu, model nói "Dạ em nghe hơi khó nghe chút ạ... Quý Khách hãy đọc
+  lại 11 số...". Audio "xác nhận đúng rồi" (dành cho lượt xác nhận thật) bị
+  phát tiếp ngay sau đó (không khớp với lượt "đọc lại giúp em" mà model vừa
+  hỏi) - model VẪN gọi `confirm_danh_bo({value:"22023251775"})` (giá trị
+  ĐÚNG, không rõ vì sao model vẫn giữ được số đúng dù tự nhận "khó nghe"),
+  nhưng **`resolveToolCall()` đã TỪ CHỐI đúng** (`DANH_BO_CONFIRM_UNCLEAR`) -
+  vì bước 2 (`isAffirmative(matcherResult.text)`) không thấy bằng chứng
+  khách THẬT SỰ xác nhận trong đúng ngữ cảnh (câu trả lời "đúng rồi" không
+  phải là xác nhận cho lượt đọc số, mà là phản hồi lạc ngữ cảnh so với lượt
+  model vừa hỏi lại). `callState.danhBo` VẪN rỗng sau lần chạy này - đúng
+  hành vi AN TOÀN mong muốn (thà từ chối nhầm còn hơn chốt nhầm số). Đây LÀ
+  BẰNG CHỨNG THẬT đầu tiên cho thấy bước 2 (tách biệt "model có gọi tool"
+  khỏi "khách có thật sự xác nhận") bảo vệ đúng trong 1 tình huống THẬT bị
+  nhiễu (không phải kịch bản dựng sẵn) - không phải lỗi code, KHÔNG cần sửa
+  gì (điểm còn thiếu thật sự là bước 6 - hỏi lại có đếm số lần/leo thang,
+  vẫn hoãn theo watchdog Giai đoạn 7 như đã ghi ở trên).
+
+  Lần chạy #2 (mạng ổn định): PASS TRÒN VẸN cả 4 điều kiện - model tự đọc
+  lại ĐÚNG NGUYÊN VĂN mẫu, tự gọi `confirm_danh_bo` đúng 1 lần đúng lúc,
+  `resolveToolCall()` trả `success:true`, `callState.danhBo` = `22023251775`
+  ghi ĐÚNG qua đường dây sản xuất thật (không phải gọi tay từ script probe
+  nữa). Coi đây là XÁC NHẬN CUỐI CÙNG: toàn bộ dây nối Giai đoạn 6b
+  (`session-ws.js`/`dispatch-tool-call.js`/`tool-router.js`/
+  `danh-bo-confirm-tool-flow.js`/`danh-bo-readback-match.js`) hoạt động đúng
+  đầu-cuối qua Realtime API thật.
+
 - [ ] **Giai đoạn 7 - `src/session/watchdogs.js`.** Lưới an toàn dùng
   chung (mute watchdog, vad-restore watchdog). Test giả lập tình huống
   "quên trigger response" để xác nhận watchdog cứu được.

@@ -23,9 +23,9 @@ function makeFakeDeps(overrides = {}) {
   };
 }
 
-test("createToolRouter: tra ve DUNG 10 ten tool xac nhan tu system-prompt.js, deu la ham", () => {
+test("createToolRouter: tra ve DUNG 10 ten tool xac nhan tu system-prompt.js, cong 1 tool confirm_danh_bo (Giai doan 6b) + 1 property handleSignal (KHONG phai ten tool)", () => {
   const router = createToolRouter(makeFakeDeps());
-  const expectedNames = [
+  const expectedToolNames = [
     "get_bill",
     "compare_usage",
     "get_outages",
@@ -36,11 +36,13 @@ test("createToolRouter: tra ve DUNG 10 ten tool xac nhan tu system-prompt.js, de
     "end_call",
     "leave_callback_message",
     "wait_for_user",
+    "confirm_danh_bo",
   ];
-  for (const name of expectedNames) {
+  for (const name of expectedToolNames) {
     assert.equal(typeof router[name], "function", `thieu hoac sai kieu cho tool "${name}"`);
   }
-  assert.deepEqual(Object.keys(router).sort(), expectedNames.sort());
+  assert.equal(typeof router.handleSignal, "function", "handleSignal (khong phai ten tool - noi tin hieu that vao danh-bo-confirm-tool-flow.js) phai co san");
+  assert.deepEqual(Object.keys(router).sort(), [...expectedToolNames, "handleSignal"].sort());
 });
 
 // [sua 24/08/2026, Giai doan 6a] resolveDanhBoRef ban THAT chi tin
@@ -182,4 +184,35 @@ test("resolveDanhBoRef THAT: callState.danhBo CHUA co -> khong goi duoc API, tra
   const out = await router.get_bill({ ma_danh_bo: "22023251775" });
   assert.equal(called, false);
   assert.equal(out.error_code, "DANH_BO_MISSING");
+});
+
+// [25/08/2026, Giai doan 6b] confirm_danh_bo/handleSignal dinh tuyen dung
+// toi danh-bo-confirm-tool-flow.js, VA quan trong nhat (giong tinh than cac
+// test callState-chia-se o tren): callState duoc CHIA SE giua handleSignal()
+// (nuoi tin hieu) va confirm_danh_bo() (tool-call that su) trong CUNG 1
+// router - dung DUNG chuoi tin hieu that da kiem chung qua scripts/probe-
+// confirm-danh-bo-tool.mjs (2 lan chay that, xem docs/roadmap.md), khong bia.
+const AI_READBACK_TEXT =
+  "Dạ, mã danh bộ của Quý Khách là Hai - Hai - Không - Hai - Ba - Hai - Năm - Một - Bảy - Bảy - Năm. Quý Khách xác nhận giúp em có đúng không ạ?";
+
+test("confirm_danh_bo + handleSignal dinh tuyen dung toi danh-bo-confirm-tool-flow.js, callState.danhBo duoc ghi qua CUNG router", async () => {
+  const callState = {};
+  const router = createToolRouter({ ...makeFakeDeps(), callState });
+
+  router.handleSignal({ kind: "response-started", responseId: "resp_ai1" });
+  router.handleSignal({ kind: "ai-said", responseId: "resp_ai1", itemId: "item_ai1", text: AI_READBACK_TEXT });
+  router.handleSignal({ kind: "response-ended", responseId: "resp_ai1", status: "completed" });
+  router.handleSignal({ kind: "user-item-added", itemId: "item_u1" });
+  router.handleSignal({ kind: "transcript-ready", itemId: "item_u1", text: "Dạ đúng rồi." });
+  router.handleSignal({ kind: "response-started", responseId: "resp_ai2" });
+
+  const out = await router.confirm_danh_bo({ value: "22023251775" });
+  assert.equal(out.success, true);
+  assert.equal(callState.danhBo, "22023251775");
+
+  // callState CHIA SE - get_bill goi NGAY SAU do (cung router) phai dung
+  // duoc gia tri vua chot, khong can truyen lai gi them (dung tinh than
+  // test "callState duoc CHIA SE" o tren).
+  const bill = await router.get_bill({});
+  assert.equal(bill.success, true);
 });

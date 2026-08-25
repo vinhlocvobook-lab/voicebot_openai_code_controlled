@@ -10,20 +10,21 @@
 // PHAM VI CO Y CUA FILE NAY (khong lam qua): CHI 2 buoc matcher/doi chieu,
 // dung DUNG mau "module thuan, ben goi tu quan ly vong doi" da ap dung
 // xuyen suot du an (xem danh-bo-collect.js/danh-bo-confirm.js dau file cua
-// chung). CHUA lam (con lai thuoc lop tich hop - se thiet ke rieng, CAN
-// THAO LUAN THEM truoc khi viet, KHONG doan o day):
-//   - Khi nao goi arm() (ben goi - tool-handler cho confirm_danh_bo, CHUA
-//     VIET - tu quyet dinh dua vao ngu canh nghiep vu, vd ngay khi nhan
-//     "ai-said" ma no cho la cau doc lai xin xac nhan).
-//   - Dinh nghia tool `confirm_danh_bo(value)` (schema, dang ky vao
-//     tool-router.js) va system prompt cho model (Entity Collection
-//     Workflow - xem skill realtime-voice-prompting).
-//   - Buoc 5 (cache vao callState, doi chieu moi lan tra cuu ke tiep).
-//   - Buoc 6 (khong khop cap duoc/khach tu choi -> "khong ket luan duoc",
-//     quay lai xin doc lai hoac leo thang DTMF - phu thuoc watchdog Giai
-//     doan 7, chua co).
+// chung).
+//
+// [25/08/2026] Lop TICH HOP (thoi diem goi arm(), tool schema, tool-handler,
+// buoc 5) DA VIET - xem src/call-flow/danh-bo-confirm-tool-flow.js (module
+// rieng, KHONG sua o day). CHUA lam (van con, phu thuoc thu chua co):
+//   - Dang ky tool `confirm_danh_bo(value)` that vao tool-router.js + ghep
+//     ENTITY_CAPTURE_INSTRUCTIONS (hien dang nam trong scripts/probe-confirm-
+//     danh-bo-tool.mjs, da kiem chung that qua probe) vao 1 system-prompt.js
+//     that cua ca bot - phan do con hoan (xem Giai doan 5 "chua lam").
+//   - Buoc 6 day du (khong khop cap duoc/khach tu choi -> "khong ket luan
+//     duoc", quay lai xin doc lai hoac leo thang DTMF) - danh-bo-confirm-
+//     tool-flow.js hien CHI co placeholder don gian (hoi lai 1 cau, KHONG
+//     dem so lan/leo thang) - day du can watchdog Giai doan 7, chua co.
 //   - Buoc 2.5 (trong tai gpt-5.1 doc lap khi so trich duoc LECH voi ASR
-//     goc cua luot khach doc so ban dau).
+//     goc cua luot khach doc so ban dau) - CHUA viet, CHUA goi.
 //
 // [SUA 25/08/2026] createReadbackMatcher() ban dau CHI xu ly 1 manh tra loi
 // duy nhat - da SUA de gom nhieu manh (khach tra loi ngat quang), xem chu
@@ -56,11 +57,16 @@ import { normalizeDanhBo, DANH_BO_LENGTH } from "./danh-bo-collect.js";
 // probe nay dung create_response:false nen KHONG co response-started nao
 // giua cac manh de doi chung That truc tiep) - AI CHI bat dau 1 response
 // MOI (tra loi tiep hoac goi tool confirm_danh_bo) SAU KHI da nghe du -
-// nen "response-started" la diem dung TU NHIEN. GIA DINH nay HOP LY nhung
-// CHUA duoc probe truc tiep xac nhan (probe dung create_response:false co
-// y de khong bi AI xen vao giua chung khi thu nghiem) - CAN kiem chung lai
-// bang checkpoint that/probe khac khi lam lop tich hop (dung tool_choice/
-// system prompt that cua 6b), ghi ro o day de khong quen.
+// nen "response-started" la diem dung TU NHIEN.
+//
+// [DA KIEM CHUNG 25/08/2026, xem scripts/probe-confirm-danh-bo-tool.mjs]
+// Gia dinh tren DA duoc probe THAT xac nhan (khong con la gia dinh chua kiem
+// chung nua) - probe do dung DUNG tool_choice mac dinh "auto" + system-
+// prompt "Entity Capture" that (khong ep buoc nao), chay 2 lan lien tiep,
+// ca 2 lan matcher.isStopped() dung luc, khong mat manh nao, resolveConfirm
+// DanhBo() khop dung ma danh bo that (22023251775). Van GIU nguyen thiet ke
+// gom-toan-bo-manh o duoi (khong doi lai chi lay manh dau) - dung "response-
+// started" lam diem dung la QUYET DINH DA KIEM CHUNG, khong phai "chua ro".
 
 /**
  * Tao 1 "phien" khop cap cho MOT lan AI doc lai xin xac nhan - dung vong

@@ -57,6 +57,17 @@ import { createOutagesHandlers } from "./outages.js";
 import { createTicketsHandlers } from "./tickets.js";
 import { createCallControlHandlers } from "./call-control.js";
 import { createProceduresHandlers } from "./procedures.js";
+// [them 25/08/2026, Giai doan 6b - xem docs/roadmap.md] confirm_danh_bo LA
+// TOOL THU 11 - khac 10 tool con lai o cho no can NHAN tin hieu THAT (khong
+// chi args) de biet duoc AI vua doc lai gi/khach vua tra loi gi (xem chu
+// thich dau danh-bo-confirm-tool-flow.js). Vi vay module nay TRA VE THEM 1
+// property KHONG PHAI ten tool - `handleSignal` - de ben goi (onSignal cua
+// connectRealtimeSession, giong cach danhBoFlow.handleSignal da duoc noi o
+// checkpoint-giai-doan-6a.mjs) tu goi voi MOI tin hieu. KHONG doi hinh dang
+// 10 property ten-tool cu (van la (args) => output truc tiep tren object
+// tra ve) - chi THEM, khong sua gi khac, dung tinh than "chi them, khong pha
+// hop dong cu" da ap dung xuyen suot file nay.
+import { createDanhBoConfirmToolFlow } from "../call-flow/danh-bo-confirm-tool-flow.js";
 
 export function createToolRouter({
   // tongdai-api.js (Giai doan 5) - nhan qua tham so, KHONG tu import thang,
@@ -82,6 +93,7 @@ export function createToolRouter({
     ...(transferTimeoutMs !== undefined ? { transferTimeoutMs } : {}),
   });
   const procedures = createProceduresHandlers({ log });
+  const danhBoConfirmToolFlow = createDanhBoConfirmToolFlow({ callState, log });
 
   return {
     get_bill: (args) => billing.handleGetBill(args, callState),
@@ -99,5 +111,12 @@ export function createToolRouter({
     // [giu nguyen tu ban cu] wait_for_user khong nhan tham so nao ca -
     // dispatch-tool-call.js van goi voi args da parse (thuong la {}), bo qua an toan.
     wait_for_user: () => callControl.handleWaitForUser(),
+    // [them 25/08/2026, Giai doan 6b] confirm_danh_bo(value) - xem
+    // danh-bo-confirm-tool-flow.js. Dung DUNG hinh dang (args) => output nhu
+    // 10 tool tren de dispatch-tool-call.js khong can sua gi.
+    confirm_danh_bo: (args) => danhBoConfirmToolFlow.resolveToolCall(args),
+    // KHONG PHAI ten tool - xem chu thich import o dau file. Ben goi (script
+    // noi day/session that) tu goi voi MOI tin hieu, giong danhBoFlow.handleSignal.
+    handleSignal: (signal) => danhBoConfirmToolFlow.handleSignal(signal),
   };
 }
