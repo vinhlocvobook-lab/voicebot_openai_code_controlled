@@ -618,9 +618,25 @@ cho cả lộ trình này:
   vấn đề của Giai đoạn 6a - Giai đoạn 6b sẽ xử lý bài toán đối chiếu
   transcript rộng hơn).
 
-  Tổng test hiện tại: 229/229 (local, `node --test`), 244/244 (trên máy
-  chủ dự án - lệch 15 do có thêm `test/calllog-api.test.mjs` không có ở
-  bản upload cục bộ, đã biết là chênh lệch vô hại).
+  Tổng test hiện tại (24/08/2026, sau khi lấp xong cả 4 việc hardening ưu
+  tiên bên dưới): 237/237 (local, `node --test`), 252/252 (trên máy chủ dự
+  án - lệch 15 do có thêm `test/calllog-api.test.mjs` không có ở bản upload
+  cục bộ, đã biết là chênh lệch vô hại).
+
+  **Cập nhật 24/08/2026 - đóng cả 4 việc hardening ưu tiên (quyết định "làm
+  tiếp 6a trước khi qua 6b")**: (1) đọc ngập ngừng qua audio thật - PASS,
+  lộ + sửa 1 bug cùng loại `tool_choice` ở chính `danh-bo-flow.js`; (2) tạp
+  âm lúc đọc số qua audio thật (`noise1`/`noise3`) - PASS cả nhánh tra cứu
+  thành công lẫn nhánh lỗi hệ thống, sau khi phát hiện + sửa 1 lỗi đặt tên
+  file mẫu nhầm số danh bộ; (3) xác nhận SAI rồi đọc lại qua audio thật
+  (`checkpoint-giai-doan-6a-xac-nhan-sai.mjs`, script mới) - PASS, khách
+  báo sai đúng 1 lần, bot tự hỏi lại/đọc lại đúng 1 lần rồi hoàn tất; (4) vá
+  khoảng trống thiết kế "xác nhận đúng danh bộ nhưng tra cứu lại vẫn thất
+  bại" (`dispatch-tool-call.js#handleDanhBoFlowDone`) - lỗi hệ thống thì
+  xin lỗi + chuyển máy ngay, lỗi dữ liệu thì tự mời đọc lại tối đa 2 lần,
+  đã có bằng chứng thật qua checkpoint cho cả 2 nhánh. Chi tiết đầy đủ (log
+  thật, bảng kết quả từng lần chạy) xem
+  `docs/fix/giai_doan_6a_audit_kich_ban_da_test_20260824.md`.
 
 - [ ] **Giai đoạn 6b - Phương án B: model tự thu thập + code đối chiếu
   (danh bộ).** Chỉ bắt đầu sau khi 6a đã xong và có kết quả để so sánh.

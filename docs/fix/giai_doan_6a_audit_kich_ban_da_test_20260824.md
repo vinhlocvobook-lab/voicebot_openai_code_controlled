@@ -324,8 +324,71 @@ trọn qua Realtime API thật + audio tạp âm thật + tra cứu billing th�
 PASS. `MAX_DANH_BO_LOOKUP_RETRIES` (nhánh lỗi dữ liệu, mời đọc lại tối đa 2
 lần) của fix #7 vẫn CHƯA có bằng chứng thật qua audio (chỉ có unit test) -
 cần 1 kịch bản audio riêng (model đọc/nghe SAI 1 số dẫn tới
-`CUSTOMER_NOT_FOUND` thật) để test, gộp chung với việc còn lại "xác nhận
-SAI qua audio thật".
+`CUSTOMER_NOT_FOUND` thật) để test.
+
+## Cập nhật 24/08/2026 #6 - "xác nhận SAI qua audio thật" (việc ưu tiên cuối cùng) - PASS, kèm 1 bug thật phát hiện trong CHÍNH SCRIPT CHECKPOINT
+
+Viết mới `scripts/checkpoint-giai-doan-6a-xac-nhan-sai.mjs` (không sửa
+`checkpoint-giai-doan-6a.mjs` cũ - giữ nguyên quan hệ tách file như
+5a/5b) + thêm audio `samples/6a_xac_nhan_sai.wav` ("Dạ, sai rồi ạ." - khớp
+`PHU_DINH_RE` thật của `danh-bo-confirm.js`, không đoán wording) qua
+`scripts/gen-sample-6a.mjs` (đã thêm cơ chế bỏ qua file đã tồn tại, tránh
+vô tình ghi đè 3 file audio cũ đang PASS bằng 1 bản TTS mới).
+
+Kịch bản: đọc số (đúng) → bot đọc lại xin xác nhận → khách nói "sai rồi ạ"
+(audio thật) → chờ `danh-bo-flow.js` thật tự quay lại "asking" → đọc lại
+đúng số (lần 2) → xác nhận "đúng" → hoàn tất → tra cứu lại billing thật.
+
+**Bug thật phát hiện (trong chính script checkpoint, KHÔNG PHẢI code app)**:
+lần chạy đầu tiên, `createDanhBoFlow({ say: turnController.say, ... })`
+truyền THẲNG giá trị hàm `turnController.say` - bị CHỐT CỨNG tại thời điểm
+đó, TRƯỚC khi đoạn code "spy" (đếm/ghi log các lượt `say()`) gán lại
+property `turnController.say`. Hậu quả: toàn bộ lời nói của
+`danh-bo-flow.js` (askPrompt/confirmPrompt/giveUp/hỏi lại không rõ ràng)
+**vẫn chạy ĐÚNG THẬT** (gọi thẳng hàm gốc, vẫn gửi `response.create` thật
+bình thường - KHÔNG ảnh hưởng hành vi bot thật) nhưng **bị spy bỏ sót hoàn
+toàn** - `askCount`/`confirmCount` luôn ra 0. Bug này tồn tại TỪ ĐẦU trong
+`checkpoint-giai-doan-6a.mjs` gốc (cùng 1 cách truyền tham số) - nghĩa là
+dòng "So lan turnController.say() (spy)" in ra ở TẤT CẢ các lần chạy
+checkpoint 6a trước đây (kể cả 2 lần PASS đầu tiên, ngập ngừng, tạp âm) đã
+LUÔN THIẾU các lượt nói của `danh-bo-flow.js`, chỉ đếm đúng phần của
+`dispatch-tool-call.js` (module này gọi qua `turnController.say(...)` -
+tra property MỖI LẦN gọi nên không dính bug). Đã sửa CẢ 2 file (đổi thành
+1 hàm gián tiếp tra lại property mỗi lần gọi, không phụ thuộc thứ tự khởi
+tạo). **Không ảnh hưởng tới kết quả PASS/FAIL đã ghi nhận trước đó** (các
+tiêu chí (a)-(d) của `checkpoint-giai-doan-6a.mjs` không phụ thuộc đếm lời
+nói của `danh-bo-flow.js`) - chỉ ảnh hưởng tới độ đầy đủ của dòng debug in
+ra, và ảnh hưởng trực tiếp tới 2 tiêu chí MỚI (e)/(f) của script "xác nhận
+sai" (không thể nào đúng nếu không sửa).
+
+**2 lần chạy thật sau khi sửa spy**:
+- Lần 1: STT lại nghe thiếu số ở LƯỢT ĐỌC LẠI (sau khi báo sai) - dừng ở
+  "asking", không phải bug (cùng loại biến động STT đã ghi nhận trước đó,
+  không phải lỗi code) - phải chạy lại.
+- Lần 2: **PASS cả 6 tiêu chí (a)-(f)**. Trình tự `say()` thật quan sát
+  được đúng như thiết kế: hỏi đọc số (lần 1) → đọc lại xin xác nhận (lần
+  1, bị từ chối) → hỏi đọc số (lần 2) → đọc lại xin xác nhận (lần 2, được
+  xác nhận) → preamble tra cứu lại → đọc kết quả billing thật (kỳ 8/2026,
+  428.413đ). `callState.danhBo` đúng `22023251775`, đúng 2 lần gọi
+  `get_bill` (1 `DANH_BO_MISSING` + 1 thành công), không có lần gọi thừa
+  nào (không lặp vô hạn, không bỏ qua bước nào) - `logs/checkpoint6a-sai-
+  1787571221856.txt`.
+
+## Tổng kết - cả 4 việc hardening ưu tiên đã xong
+
+Tính đến đây, cả 4 việc đã thống nhất làm trước khi qua Giai đoạn 6b đều
+đã có bằng chứng PASS thật qua Realtime API + audio thật: (1) ngập ngừng,
+(2) tạp âm, (3) xác nhận SAI rồi đọc lại, (4) vá khoảng trống "xác nhận
+đúng nhưng tra cứu lại vẫn thất bại". Test: 237/237 local, 252/252 device.
+Đã đồng bộ lại `docs/roadmap.md` (mục Giai đoạn 6a) với tóm tắt + số liệu
+mới nhất.
+
+**Còn lại CHƯA test** (mức độ ưu tiên thấp hơn, chưa có kế hoạch cụ thể -
+xem "Kịch bản CHƯA được test bằng bất kỳ hình thức nào" phía trên, đã cập
+nhật gạch bỏ mục tạp âm): 3 tool khác `get_bill` bị chặn bởi
+`DANH_BO_MISSING`, 2 lần `DANH_BO_MISSING` liên tiếp trong cùng 1 cuộc
+gọi, đọc thừa/thiếu số rồi im lặng kéo dài, watchdog bằng 1 cuộc gọi thật,
+`MAX_DANH_BO_LOOKUP_RETRIES` (fix #7, nhánh lỗi dữ liệu) qua audio thật.
 
 [^ten-file-nham]: Tên file ghi `22082351775` nhưng THẬT SỰ đọc
     `22023251775` - xem "Đính chính 24/08/2026 #3" bên dưới. Transcript ở

@@ -10,7 +10,7 @@
 // (tranh TTS doc gop thanh so lon).
 //
 // KHAC 5b (chi 1 file, 1 cau gop ca loi chao + doc so): Giai doan 6a can
-// 3 luot noi RIENG BIET vi danh-bo-flow.js (state machine moi) doi hoi
+// nhieu luot noi RIENG BIET vi danh-bo-flow.js (state machine moi) doi hoi
 // CODE chu dong dan dat tung buoc (arming -> asking -> confirming), khong
 // con la 1 cau tu do nhu 5b:
 //   1. 6a_mo_dau_khong_danh_bo.wav - loi mo dau CO Y KHONG doc danh bo
@@ -23,9 +23,26 @@
 //      ("Dạ, Quý Khách vui lòng đọc giúp em mã danh bộ...").
 //   3. 6a_xac_nhan_dung.wav - "Dạ đúng rồi ạ." - se phat SAU khi
 //      danhBoFlow doc lai xin xac nhan.
+//   4. [them 24/08/2026 #10, viec uu tien con lai "xac nhan SAI qua audio
+//      that" - xem docs/fix/giai_doan_6a_audit_kich_ban_da_test_20260824.md]
+//      6a_xac_nhan_sai.wav - "Dạ, sai rồi ạ." - dung cho
+//      checkpoint-giai-doan-6a-xac-nhan-sai.mjs (script MOI, chua viet luc
+//      sample nay duoc tao) de kich nhanh isNegative() THAT cua
+//      danh-bo-flow.js (xem src/call-flow/danh-bo-confirm.js#PHU_DINH_RE -
+//      "sai rồi" khop CA 2 nhanh trong regex do, "sai rồi" VA rieng le
+//      "\bsai\b" - chon co y de khong mo ho, tranh khop nham nhanh
+//      isAffirmative/wantsRepeat nao khac).
 // checkpoint-giai-doan-6a.mjs se tu quyet dinh LUC NAO phat file nao (doi
 // dung tin hieu/phase tuong ung, khong phat theo timer co dinh mu quang) -
-// script nay CHI tao san 3 file, khong lien quan toi luc phat.
+// script nay CHI tao san cac file, khong lien quan toi luc phat.
+//
+// [them 24/08/2026 #10] Script nay GIO SE BO QUA (khong goi TTS lai, khong
+// ghi de) bat ky file nao DA TON TAI san trong samples/ - tranh nguy co THAT
+// (neu chay lai ca script se GHI DE ca 3 file cu DA duoc nghe/xac nhan tot +
+// DA dung PASS qua checkpoint that, TTS khong dinh - lan tao lai co the doc
+// khac di chut it, lam hong lai audio dang hoat dong dung). Dung "--force"
+// (process.argv) de ep tao lai TAT CA (chi dung khi CO Y muon tao lai, vd
+// doi giong/model TTS).
 //
 // response_format: "wav" - 5b da xac nhan day la PCM 16-bit boc WAV
 // header, sample rate ra sao thi TU BAN THAN file WAV do se noi (khong
@@ -82,13 +99,24 @@ const SAMPLES = [
     text: "Dạ đúng rồi ạ.",
     note: "xac nhan DUNG khi danhBoFlow doc lai so xin xac nhan",
   },
+  {
+    outName: "6a_xac_nhan_sai.wav",
+    text: "Dạ, sai rồi ạ.",
+    note: "[them 24/08/2026 #10] xac nhan SAI khi danhBoFlow doc lai so xin xac nhan - kich isNegative() that",
+  },
 ];
 
+const FORCE = process.argv.includes("--force");
 const outDir = path.join(__dirname, "..", "samples");
 fs.mkdirSync(outDir, { recursive: true });
 
 for (const sample of SAMPLES) {
   const outPath = path.join(outDir, sample.outName);
+  if (!FORCE && fs.existsSync(outPath)) {
+    console.log(`\n[gen-sample-6a] (${sample.note})`);
+    console.log(`[gen-sample-6a] BO QUA - ${outPath} da ton tai (dung --force neu muon tao lai co y).`);
+    continue;
+  }
   console.log(`\n[gen-sample-6a] (${sample.note})`);
   console.log(`[gen-sample-6a] Goi OpenAI TTS (model=${TTS_MODEL}, voice=${TTS_VOICE})...`);
   console.log(`[gen-sample-6a] Noi dung: "${sample.text}"`);
@@ -119,7 +147,7 @@ for (const sample of SAMPLES) {
 }
 
 console.log(
-  "\n[gen-sample-6a] XONG CA 3 FILE. TIEP THEO: nghe thu CA 3 file trong samples/ " +
-    "(6a_mo_dau_khong_danh_bo.wav, 6a_doc_so_22023251775.wav, 6a_xac_nhan_dung.wav) " +
-    "truoc khi bao lai cho minh de viet checkpoint-giai-doan-6a.mjs dung 3 file nay.",
+  "\n[gen-sample-6a] XONG. TIEP THEO: nghe thu file(s) MOI vua tao trong samples/ " +
+    "(nghe ro 6a_xac_nhan_sai.wav noi 'sai'/'không đúng', KHONG bi lan sang 'đúng') " +
+    "truoc khi bao lai cho minh de dung cho checkpoint.",
 );

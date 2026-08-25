@@ -290,7 +290,24 @@ let dispatcher;
 
 const danhBoFlow = createDanhBoFlow({
   setVadMode,
-  say: turnController.say,
+  // [sua 24/08/2026 #11, PHAT HIEN THAT khi viet checkpoint-giai-doan-6a-
+  // xac-nhan-sai.mjs] KHONG duoc truyen thang `turnController.say` (gia tri
+  // HAM duoc DOC ra va CHOT LAI ngay luc nay) - script nay GAN LAI property
+  // `turnController.say` SAU (xem "Spy quanh turnController.say" ben duoi,
+  // de ghi sayCalls) - vi createDanhBoFlow() da CHOT san ham GOC vao closure
+  // `say` cua no ngay tai dong nay, MOI lan gan lai property sau do KHONG
+  // con anh huong gi toi danhBoFlow nua -> TOAN BO 4 loi say() cua danh-bo-
+  // flow.js (askPrompt/confirmPrompt/giveUp/hoi lai khong ro rang) tuy VAN
+  // CHAY DUNG THAT (goi thang ham goc, van gui response.create that binh
+  // thuong - KHONG anh huong hanh vi bot that) nhung BI SPY BO SOT hoan
+  // toan - "So lan turnController.say() (spy)" in ra o finish() TU TRUOC
+  // GIO da luon THIEU cac loi noi cua danh-bo-flow.js (chi con dispatch-
+  // tool-call.js, module goi qua `turnController.say(...)` - TRUY CAP
+  // property MOI LAN goi, nen KHONG dinh bug nay). Sua: bao mot ham
+  // indirection tra cuu LAI property `turnController.say` MOI LAN duoc goi
+  // (khong chot gia tri ham tai thoi diem wiring) - dung DUOC BAT KE thu tu
+  // spy duoc gan truoc/sau danhBoFlow duoc tao.
+  say: (...args) => turnController.say(...args),
   maxAttempts: 3,
   watchdogMs: 90000,
   log,
