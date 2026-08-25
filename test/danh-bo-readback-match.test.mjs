@@ -82,20 +82,37 @@ test("[du lieu that #2 - 6b_dung_roi_ngap_ngung_noise1.wav, 4 manh] gom DU 4 man
   });
 });
 
-test("[du lieu that #3 - 6b_dung_roi_ngap_ngung_noise2.wav, 2 manh] gom du 2 manh - transcript manh cuoi den SAU response-started van duoc tinh (dung thu tu bat dong bo da ghi nhan o Giai doan 1)", () => {
+// [25/08/2026 - Cap nhat #2] Lan chay dau cua noise2.wav (2 manh, "À" +
+// "Để xem lại nha.") bi CAT MAT phan "đúng rồi" o cuoi do 1 bug KHAC (het
+// han o probe-confirm-danh-bo.mjs: debounce dong ket noi som trong luc con
+// dang gui audio - da sua, xem docs/fix). Test duoi day dung DU LIEU DA
+// SUA/DAY DU (3 manh, chay lai thanh cong) - manh dau la 1 hien tuong phu
+// thu vi (ASR echo lai chinh TRANSCRIBE_PROMPT vi audio dau khong ro, xem
+// docs/fix) nhung KHONG anh huong ket qua vi matcher gom THEO THU TU, khong
+// phu thuoc noi dung.
+test("[du lieu that #3 - 6b_dung_roi_ngap_ngung_noise2.wav, 3 manh SAU KHI sua bug cat audio o probe] gom du 3 manh - transcript manh cuoi den SAU response-started van duoc tinh (dung thu tu bat dong bo da ghi nhan o Giai doan 1)", () => {
   const m = createReadbackMatcher();
   m.arm(AI_READBACK_TEXT);
 
   m.handleSignal({ kind: "user-item-added", itemId: "item_u1" });
-  m.handleSignal({ kind: "transcript-ready", itemId: "item_u1", text: "À" });
+  m.handleSignal({
+    kind: "transcript-ready",
+    itemId: "item_u1",
+    text: "Cuộc gọi tổng đài chăm sóc khách hàng công ty cấp nước tại TP.HCM, toàn bộ bằng tiếng Việt. Có thể chứa mã danh bộ 11 chữ số, số tiền.",
+  });
   m.handleSignal({ kind: "user-item-added", itemId: "item_u2" });
-  // response-started den TRUOC transcript cua manh thu 2 (mo phong dung do
+  m.handleSignal({ kind: "transcript-ready", itemId: "item_u2", text: "Để xem lại nha." });
+  m.handleSignal({ kind: "user-item-added", itemId: "item_u3" });
+  // response-started den TRUOC transcript cua manh thu 3 (mo phong dung do
   // that o Giai doan 1: transcript co the den SAU response.created).
   m.handleSignal({ kind: "response-started", responseId: "resp_2" });
-  assert.equal(m.getResult(), null, "da 'dung' nhung item_u2 CHUA co transcript - phai cho, KHONG duoc chot thieu");
+  assert.equal(m.getResult(), null, "da 'dung' nhung item_u3 CHUA co transcript - phai cho, KHONG duoc chot thieu");
 
-  m.handleSignal({ kind: "transcript-ready", itemId: "item_u2", text: "Để xem lại nha." });
-  assert.deepEqual(m.getResult(), { itemIds: ["item_u1", "item_u2"], text: "À Để xem lại nha." });
+  m.handleSignal({ kind: "transcript-ready", itemId: "item_u3", text: "À đúng rồi." });
+  assert.deepEqual(m.getResult(), {
+    itemIds: ["item_u1", "item_u2", "item_u3"],
+    text: "Cuộc gọi tổng đài chăm sóc khách hàng công ty cấp nước tại TP.HCM, toàn bộ bằng tiếng Việt. Có thể chứa mã danh bộ 11 chữ số, số tiền. Để xem lại nha. À đúng rồi.",
+  });
 });
 
 test("user-item-added den SAU 'response-started' (AI da bat dau luot ke tiep) bi bo qua, khong gom nham vao luot tra loi cu", () => {

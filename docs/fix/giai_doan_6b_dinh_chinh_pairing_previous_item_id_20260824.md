@@ -179,12 +179,11 @@ câu trả lời khi khách nói ngắt quãng - xác nhận thật cho cả câ
 cũng có field này ở CẤP TOP-LEVEL (khác cấp `item` - cấp `item` đã xác
 nhận KHÔNG có ở lần chạy 24/08/2026) và cho kết quả giống hệt.
 
-**LƯU Ý CHƯA GIẢI QUYẾT**: file `noise2` transcript không hề chứa từ
-"đúng"/"sai" nào trong phạm vi đã bắt được (2 mảnh: "À" + "Để xem lại
-nha.") - có thể do khoảng ngừng trước phần "đúng rồi ạ" (nếu bản ghi âm có
-phần đó) dài hơn `QUIET_PERIOD_MS` (4000ms) của probe, bị cắt sớm trước
-khi bắt được mảnh cuối - CHƯA xác nhận, cần chủ dự án nghe lại nguyên bản
-ghi âm `noise2` để biết có phần "đúng rồi ạ" phía sau bị cắt mất hay không.
+**LƯU Ý ĐÃ GIẢI QUYẾT (xem mục "Cập nhật 25/08/2026 #2" bên dưới)**: file
+`noise2` ban đầu transcript không chứa từ "đúng"/"sai" - chủ dự án xác
+nhận bản ghi âm THẬT SỰ có nói "đúng rồi" ở đoạn sau, bị `probe-confirm-
+danh-bo.mjs` cắt mất do 1 bug thật khác (debounce đóng kết nối sớm) - đã
+sửa và chạy lại thành công, xem chi tiết bên dưới.
 
 ### Lỗ hổng bị lộ ra + đã sửa
 
@@ -213,3 +212,54 @@ Test: `src/call-flow/danh-bo-readback-match.js` +
 `test/danh-bo-readback-match.test.mjs` sửa lại, dùng ĐÚNG dữ liệu thật ở
 bảng trên (thay vì fixture bịa). 251/251 (local, không đổi số lượng - thay
 7 test cũ bằng 7 test mới cho matcher).
+
+## Cập nhật 25/08/2026 #2 - sửa bug debounce cắt audio, xác nhận đủ "đúng rồi" ở cả 2 file
+
+Chủ dự án nghe lại bản ghi âm gốc, xác nhận `noise2.wav` THẬT SỰ có nói
+"đúng rồi" ở đoạn sau - vậy lần chạy probe trước đó (mục trên) bị THIẾU dữ
+liệu, không phải do audio thiếu.
+
+**Nguyên nhân (bug thật trong `probe-confirm-danh-bo.mjs`, không phải
+trong matcher/turn-signal.js)**: `streamAudioFile()` gửi audio THEO ĐÚNG
+THỜI GIAN THỰC (mỗi frame 20ms `sleep` 20ms). Bộ đếm "im lặng
+`QUIET_PERIOD_MS` (4000ms) thì đóng kết nối" (thêm hôm 25/08/2026 để chờ
+đủ nhiều mảnh) lại KHÔNG biết là `streamAudioFile()` có thể vẫn đang chạy
+dở - nếu khoảng ngừng NẰM BÊN TRONG chính file ghi âm (giữa "Để xem lại
+nha." và "đúng rồi") DÀI HƠN 4000ms (đúng trường hợp `noise2.wav`), bộ đếm
+kích hoạt và đóng kết nối GIỮA CHỪNG lúc `streamAudioFile()` còn đang
+`await sleep()` - cắt mất phần audio "đúng rồi" chưa kịp gửi hết.
+
+**Sửa**: thêm cờ `streamingDone` (đặt `true` trong `.then()` của
+`streamAudioFile()`, tức là SAU KHI đã gửi hết toàn bộ audio + 2.5s im
+lặng đệm). Bộ đếm debounce giờ CHỈ được phép đóng kết nối khi
+`streamingDone === true` - dù khoảng ngừng bên trong file ghi âm dài bao
+nhiêu cũng không còn bị cắt ngang.
+
+**Kết quả chạy lại (cả 2 file, để đối chứng)**:
+
+| File | Số mảnh | Transcript từng mảnh | Chuỗi "đúng rồi" đã bắt được? |
+| --- | --- | --- | --- |
+| `noise2.wav` (chạy lại) | 3 (trước: 2, bị cắt) | "Cuộc gọi tổng đài chăm sóc khách hàng công ty cấp nước tại TP.HCM..." (xem ghi chú dưới) / "Để xem lại nha." / "À đúng rồi." | CÓ - mảnh thứ 3 |
+| `noise1.wav` (chạy lại, đối chứng bug sửa không phá kết quả cũ) | 4 (không đổi) | "À, để kiểm tra xíu." / "Aha" / "À, đúng rồi." / "Tổng đài." | CÓ - mảnh thứ 3 (không đổi vị trí so với lần chạy trước) |
+
+`previous_item_id` (cả `input_audio_buffer.committed` lẫn
+`conversation.item.added` cấp top-level) tiếp tục nối ĐÚNG 100% ở cả 2 lần
+chạy lại (2/2 và 3/3 cặp liên tiếp khớp) - CỦNG CỐ thêm kết luận đã có,
+không có gì thay đổi về cơ chế.
+
+**Ghi chú phụ, không phải lỗi cần sửa**: mảnh đầu tiên của `noise2.wav`
+(chạy lại) transcript ra NGUYÊN VĂN đúng bằng `TRANSCRIBE_PROMPT` (biến
+hằng khai báo đầu `probe-confirm-danh-bo.mjs`, dùng để "gợi ý" cho
+`gpt-4o-transcribe`) - đây là hiện tượng ASR ECHO LẠI CHÍNH PROMPT GỢI Ý
+của nó khi audio đầu vào không rõ ràng/mơ hồ (hành vi đã biết của các
+model transcribe dựa trên prompt-biasing, không phải bug code). Cũng thấy
+rõ STT KHÔNG ỔN ĐỊNH giữa 2 lần chạy CÙNG 1 file `noise1.wav` ("Vâng ạ."/
+"Hóa đơn." lần đầu vs "Aha"/"Tổng đài." lần này) - khớp đúng hiện tượng đã
+ghi nhận nhiều lần trong `docs/fix/giai_doan_6a_audit_kich_ban_da_test_
+20260824.md` (STT không hoàn hảo dù cùng 1 audio, không phải bug tách
+lượt). KHÔNG ảnh hưởng tới kết luận chính - `createReadbackMatcher()` gom
+đúng theo THỨ TỰ, không phụ thuộc nội dung transcript chính xác từng chữ.
+
+`scripts/probe-confirm-danh-bo.mjs` cập nhật, không cần sửa gì thêm ở
+`danh-bo-readback-match.js`/test (đã đúng từ mục "Cập nhật 25/08/2026" ở
+trên - lần này chỉ xác nhận thêm bằng dữ liệu đầy đủ hơn).

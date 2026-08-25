@@ -217,10 +217,20 @@ ws.on("message", (raw) => {
   if (event.type === "response.done" && phase === "asking-readback") {
     phase = "streaming-customer-reply";
     console.log("[probe-confirm-danh-bo] Model da noi xong (response.done) - phat NGAY audio khach xac nhan...");
-    streamAudioFile(AUDIO_XAC_NHAN_DUNG).catch((err) => {
-      console.error("[probe-confirm-danh-bo] Loi khi stream audio:", err.message);
-      closeSoon();
-    });
+    streamAudioFile(AUDIO_XAC_NHAN_DUNG)
+      .then(() => {
+        // [them 25/08/2026, sua BUG THAT phat hien qua file noise2.wav -
+        // xem chu thich o QUIET_PERIOD_MS ben duoi] Chi danh dau XONG stream
+        // SAU KHI da gui het toan bo audio (ke ca khoang ngung DAI hon
+        // QUIET_PERIOD_MS NAM BEN TRONG chinh file WAV, vd noise2.wav co
+        // khoang ngung truoc "đúng rồi" dai hon 4000ms).
+        streamingDone = true;
+        console.log("[probe-confirm-danh-bo] streamAudioFile() DA XONG (streamingDone=true) - tu day moi tinh debounce dong ket noi.");
+      })
+      .catch((err) => {
+        console.error("[probe-confirm-danh-bo] Loi khi stream audio:", err.message);
+        closeSoon();
+      });
   }
 
   if (event.type === "error") {
@@ -235,13 +245,29 @@ ws.on("message", (raw) => {
 // 4000ms chon RONG hon nhieu so voi khoang ngung giua cac cum da do THAT o
 // Giai doan 1 (~416-1348ms, xem docs/fix/giai_doan_1_...) - danh du bien do
 // an toan, KHONG doan thap hon se bi cat manh cuoi.
+//
+// [SUA BUG THAT 25/08/2026, phat hien qua samples/6b_dung_roi_ngap_ngung_
+// noise2.wav - chu du an xac nhan file THAT SU co noi "đúng rồi" o cuoi,
+// nhung lan chay truoc KHONG bat duoc]: streamAudioFile() gui audio THEO
+// THOI GIAN THUC (moi frame 20ms sleep dung 20ms) - neu file WAV co 1
+// khoang ngung NAM BEN TRONG no (giua "Để xem lại nha." va "đúng rồi") DAI
+// HON QUIET_PERIOD_MS, debounce cu se bi kich hoat va dong ket noi (goi
+// closeSoon()) TRONG LUC streamAudioFile() con dang await sleep() giua
+// chung - CAT NGANG, phan audio "đúng rồi" chua kip gui het/chua kip server
+// xu ly xong. Sua: CHI bat dau tinh debounce SAU KHI streamingDone=true
+// (dat trong .then() cua streamAudioFile() o tren, tuc la DA gui het TOAN
+// BO audio + 2.5s im lang dem) - truoc do, du im lang bao lau (ke ca do la
+// khoang ngung THAT nam trong chinh file ghi am) cung KHONG duoc phep dong
+// ket noi.
+let streamingDone = false;
 const QUIET_PERIOD_MS = 4000;
 setInterval(() => {
   if (closing) return;
+  if (!streamingDone) return; // con dang gui audio - CHUA duoc tinh debounce, du bao lau
   if (phase !== "streaming-customer-reply" && phase !== "done") return;
   if (lastCustomerActivityAtMs === null) return;
   if (Date.now() - lastCustomerActivityAtMs >= QUIET_PERIOD_MS) {
-    console.log(`[probe-confirm-danh-bo] Da im lang ${QUIET_PERIOD_MS}ms sau manh transcript cuoi cung - coi la KHACH da noi xong.`);
+    console.log(`[probe-confirm-danh-bo] Da gui het audio (streamingDone) VA im lang ${QUIET_PERIOD_MS}ms sau manh transcript cuoi cung - coi la KHACH da noi xong.`);
     phase = "done";
     closeSoon();
   }
