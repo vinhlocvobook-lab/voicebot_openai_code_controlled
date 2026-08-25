@@ -937,6 +937,104 @@ cho cả lộ trình này:
   chung (mute watchdog, vad-restore watchdog). Test giả lập tình huống
   "quên trigger response" để xác nhận watchdog cứu được.
 
+  **Cập nhật 25/08/2026 - bắt đầu triển khai (nhánh `giai-doan-7-watchdogs`,
+  branch trực tiếp từ tip `giai-doan-6b-model-collection`)**. Trước khi viết
+  code, tra lại THẬT code bản cũ (`voice_bot/src/session-ws.js`) để biết
+  chính xác 2 watchdog "dùng chung" này khác gì với watchdog riêng của khâu
+  danh bộ (đã tự làm xong ở Giai đoạn 6a, KHÔNG thuộc phạm vi ở đây):
+  `_armMuteWatchdog`/`_MUTE_WATCHDOG_MS` (mặc định 15000ms - lưới chống bot
+  câm sau khi khách nói mà chưa được đáp) và `_vadRestoreTimer`/
+  `_VAD_RESTORE_MS` (tự khôi phục `turn_detection` về "normal" nếu quên gọi
+  `setVadMode("normal")` ở một nhánh thoát nào đó sau khi khoá sang "digits").
+
+  **Đính chính 1 lỗi thật kế thừa từ bản cũ, phát hiện qua thảo luận với chủ
+  dự án (chưa viết code, chỉ bàn thiết kế) - không copy nguyên xi:** bản cũ
+  gọi `_armMuteWatchdog()` (kèm `clearTimeout` + đặt lại đồng hồ đủ
+  `_MUTE_WATCHDOG_MS` MỚI) ở MỌI lượt khách nói (dòng 1700
+  `session-ws.js` cũ). Nghĩa là nếu khách sốt ruột hỏi lại ("Alo? có nghe
+  không") giữa lúc chờ, hạn chót bị ĐẨY XA HƠN thay vì rút ngắn lại - càng
+  hỏi nhiều càng phải chờ lâu hơn, ngược trực giác người dùng. Bản mới KHÔNG
+  copy hành vi này: tách riêng `lastCustomerTurnAt` (chỉ để biết "đang chờ
+  trả lời hay không") khỏi `idleAnchorMs` (mốc THẬT SỰ dùng để đếm ngưỡng) -
+  các lượt khách nói thêm trong lúc đang đếm KHÔNG đẩy `idleAnchorMs` lùi
+  lại, xem test regression "khách nói LẠI nhiều lần trong lúc chờ" trong
+  `test/watchdogs.test.mjs`.
+
+  **Câu hỏi tiếp theo từ chủ dự án - làm sao phân biệt "khách chờ phản hồi"
+  / "khách bổ sung thêm cho lượt trước" (VD đọc số bị VAD tách mảnh) /
+  "khách hỏi sang chuyện khác"?** Quyết định: KHÔNG để watchdog (lớp CHUNG,
+  không biết nghiệp vụ) tự đoán ý định qua nội dung transcript - việc "biết
+  khách đang bổ sung thêm cho lượt trước" ĐÃ được giải quyết đúng ở lớp
+  nghiệp vụ rồi (`danh-bo-collect.js` gom mảnh qua VAD "digits" mode,
+  `danh-bo-confirm-tool-flow.js` gom mảnh tới khi thấy "response-started").
+  Watchdog chỉ cần 1 cổng nhị phân `isBusy()` được TRUYỀN VÀO từ nơi khởi
+  tạo (nơi biết đang có module nghiệp vụ nào chạy, VD
+  `() => danhBoFlow.getPhase() !== "idle"`) - watchdogs.js bản thân KHÔNG
+  import bất kỳ module nghiệp vụ cụ thể nào.
+
+  **Push (module nghiệp vụ chủ động "bắn tin" cho watchdog) hay pull
+  (watchdog tự đọc biến lúc bắn)? Chọn PULL** - lý do: push đòi hỏi mọi
+  module nghiệp vụ phải nhớ gọi cả `markBusy()`/`markIdle()` đúng chỗ, chỉ
+  cần 1 nhánh thoát quên gọi `markIdle()` là watchdog bị khoá "bận" vĩnh
+  viễn - tự tạo ra ĐÚNG loại bug mà watchdog sinh ra để bắt. Pull đã có tiền
+  lệ THẬT trong chính bản cũ (`_muteWatchdogTimer` callback tự đọc
+  `_toolCallState._danhBoVerifyRunning || _expectedSpeak` NGAY LÚC hết giờ,
+  không cần module khác "đánh thức" nó) và khớp đúng nguyên tắc kiến trúc
+  xuyên suốt dự án (đọc trạng thái SỐNG tại thời điểm cần, không cache/đẩy
+  rải rác - giống `resolve-danh-bo-ref.js` đọc `callState.danhBo` sống,
+  giống `danh-bo-flow.js#checkWatchdog(nowMs)`).
+
+  **Bug thật tự phát hiện khi viết test (trước khi giao code, không phải
+  qua chạy thật):** thiết kế "neo `idleAnchorMs` = `nowMs` ngay lúc đang
+  bận" gây sai lệch - vì watchdog CHỈ biết được trạng thái tại đúng thời
+  điểm được poll (không có timestamp riêng cho lúc `isBusy()` đổi giá trị),
+  neo vào lúc còn đang bận (thay vì lúc mới hết bận) làm ngưỡng bị tính từ
+  mốc SỚM hơn thực tế, bắn SỚM hơn đúng. Sửa: nhánh "đang bận" phải đặt
+  `idleAnchorMs = null` (không phải `nowMs`) để nhánh "lần đầu hết bận" tự
+  neo chính xác vào lần poll đầu tiên phát hiện hết bận.
+
+  Viết dạng module thuần trước (`src/session/watchdogs.js`,
+  `createMuteWatchdog`/`createVadRestoreWatchdog`, đúng khuôn
+  `checkWatchdog(nowMs)` của `danh-bo-flow.js` - không tự gọi
+  setTimeout/setInterval, `nowMs` luôn do bên ngoài truyền vào). Test:
+  15 test mới (`test/watchdogs.test.mjs`), 277/277 xanh cục bộ (262 cũ + 15
+  mới), 292/292 trên máy chủ dự án, không hồi quy.
+
+  **Cập nhật 25/08/2026 #2 - viết `scripts/checkpoint-giai-doan-7-watchdogs.mjs`
+  + chạy thật, PASS trọn vẹn (chủ dự án tự chạy + dán lại nguyên console
+  output).** Nối `watchdogs.js` vào đúng đường dây thật
+  (`connectRealtimeSession` của `session-ws.js`) NGAY TẠI checkpoint (chưa có
+  1 `server.js` sản xuất để nối "chính thức" - giống cách `danh-bo-flow.js`
+  từng được nối lần đầu ở `checkpoint-giai-doan-6a.mjs`), gồm 2 pha TÁCH BIỆT
+  trong CÙNG 1 kết nối: Pha A giả lập đúng bug "code quên trả lời" (khoá VAD
+  "digits", phát audio khách nói thật, CỐ Ý không gọi `say()`/`response.create`
+  nào) để mute watchdog tự phát hiện + tự mở khoá + ép model trả lời; Pha B
+  khoá VAD lần nữa nhưng KHÔNG có lượt khách nào (để loại trừ mute watchdog
+  can thiệp), chỉ còn vad-restore watchdog là cơ chế duy nhất có thể tự khôi
+  phục. Ngưỡng RÚT NGẮN riêng cho checkpoint (mute=5000ms, vad-restore=20000ms
+  - không phải giá trị sản xuất, xem chú thích đầu file) để chạy nhanh nhưng
+  vẫn đủ tách biệt 2 pha (20000ms > tổng thời gian pha A ước lượng ~13s).
+
+  Kết quả chạy thật: `muteFireEvents:[13825]` (kích hoạt đúng 1 lần, ~8.8s
+  sau khi khách nói xong - đúng khoảng `MUTE_THRESHOLD_MS`, không sớm/không
+  bao giờ); `responseStartedEvents:[14110]` (model THẬT SỰ trả lời ngay sau
+  khi bị ép, không phải "báo động suông"); `vadRestoreFireEvents:[37155]` -
+  đối chiếu tay: pha B bắt đầu khoá lại VAD ngay sau khi mute watchdog xử lý
+  xong (~17155ms), 37155-17155 = ĐÚNG 20000ms (`VAD_RESTORE_THRESHOLD_MS`)
+  không sai lệch - xác nhận thiết kế "neo mốc đếm CHÍNH XÁC" (sửa hôm
+  25/08/2026 khi viết test) hoạt động đúng NGOÀI ĐỜI THẬT, không chỉ đúng
+  trên đồng hồ giả của unit test. Cả 4 điều kiện (a)-(d) đều `true`, không có
+  event error. Coi phần lõi Giai đoạn 7 (2 watchdog, cơ chế `isBusy()`
+  kiểu pull, không đẩy hạn chót theo lượt lặp lại) là ĐÃ KIỂM CHỨNG qua cả
+  unit test lẫn API thật.
+
+  Còn thiếu (chưa làm, không phải quên - chưa có nơi để nối "chính thức"):
+  nối `watchdogs.js` vào một entry point sản xuất thật (`server.js` hay
+  tương đương) khi entry point đó được viết - hiện dự án CHƯA CÓ 1 file nào
+  đóng vai trò đó (mọi checkpoint đều tự dựng kết nối riêng); giá trị ngưỡng
+  sản xuất CHÍNH THỨC (15000ms/90000ms - mặc định của `watchdogs.js`, giữ
+  nguyên từ bản cũ) chưa được chốt lại lần cuối với chủ dự án.
+
 - [ ] **Giai đoạn 8 - Nối SIP thật qua OpenAI Realtime Calls API.**
   Chuyển `call-manager.js` (accept/reject/refer/hangup) sang cuối cùng -
   sau khi toàn bộ logic phía trên đã test được mà không cần điện thoại
