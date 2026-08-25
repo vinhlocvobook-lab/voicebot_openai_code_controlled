@@ -737,9 +737,25 @@ cho cả lộ trình này:
   `docs/fix/giai_doan_6b_dinh_chinh_pairing_previous_item_id_20260824.md`.
   Đã chuẩn hoá nền tảng cho cơ chế này: `src/session/turn-signal.js` thêm
   tín hiệu `"user-item-added"` (từ `conversation.item.added`,
-  `role:"user"`). Test: 238/238 (local), 253/253 (máy chủ dự án). Bước
-  tiếp theo: viết các hàm matcher thuần (khớp cặp, trích số từ câu model
-  đọc lại, so sánh) theo đúng thứ tự đã ghi ở trên.
+  `role:"user"`). Test: 238/238 (local), 253/253 (máy chủ dự án).
+
+  **Cập nhật 25/08/2026 - viết matcher thuần (bước 1-4)**: thêm
+  `src/call-flow/danh-bo-readback-match.js` gồm 2 hàm THUẦN, test bằng
+  fixture riêng lẻ (đúng thứ tự đã ghi ở trên, CHƯA tích hợp qua harness):
+  (1) `createReadbackMatcher()` - khớp cặp "AI vừa đọc lại" với "khách trả
+  lời ngay sau đó" theo THỨ TỰ item (tín hiệu `"user-item-added"` +
+  `"transcript-ready"`, đúng cơ chế đã đính chính ở trên), vòng đời 1 phiên/
+  1 lần đọc lại (giống `createDanhBoSession()` của Giai đoạn 6a); (2)
+  `resolveConfirmDanhBo({toolValue, aiReadbackText})` - trích số từ CHÍNH
+  câu AI đọc lại (dùng lại `normalizeDanhBo()`/`viDigitsFromWords()` đã có
+  sẵn ở `danh-bo-collect.js`, không viết hàm trích số riêng) rồi so sánh với
+  giá trị tool `confirm_danh_bo` gửi lên - trả về `"match"`/`"override"`/
+  `"unclear"` (bước 3/4/6 một phần). CHƯA làm (cần thảo luận thiết kế thêm,
+  xem chú thích đầu file `danh-bo-readback-match.js`): khi nào gọi `arm()`
+  (lớp tích hợp - tool-handler cho `confirm_danh_bo`, chưa viết), định
+  nghĩa tool + system prompt, bước 5 (cache vào `callState`), bước 6 (nhánh
+  "không kết luận được" đầy đủ - phụ thuộc watchdog Giai đoạn 7), bước 2.5
+  (trọng tài gpt-5.1). Test: 251/251 (local), 266/266 (máy chủ dự án).
 
 - [ ] **Giai đoạn 7 - `src/session/watchdogs.js`.** Lưới an toàn dùng
   chung (mute watchdog, vad-restore watchdog). Test giả lập tình huống
