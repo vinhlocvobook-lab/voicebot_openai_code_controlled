@@ -19,14 +19,16 @@
 //   - end_call -> action:"end_call": ban cu dung tin hieu nay de biet luc
 //     nao dong SIP call THAT sau khi AI noi loi chao tam biet.
 //
-// dispatch-tool-call.js (Giai doan 5a) HIEN TAI goi turnController.say()
-// VO DIEU KIEN sau MOI tool call (xem ghi chu dau file do) - CHUA doc field
-// `action` o day. Module nay CHI co nhiem vu tra dung du lieu/action (nhu
-// ban cu) - viec DOC va HANH DONG theo `action` (bo qua say() cho no_reply,
-// dong SIP call that cho end_call, ...) la viec cua tool-router.js (chua
-// viet) hoac 1 ban cap nhat dispatch-tool-call.js rieng, PHAI lam TRUOC khi
-// noi 4 tool nay vao 1 cuoc goi that - neu khong, wait_for_user se khong co
-// tac dung gi (bot van noi binh thuong sau khi goi tool nay).
+// [CAP NHAT 25/08/2026, Giai doan 8 - DA XU LY, giu doan van tren de nho
+// lich su] dispatch-tool-call.js gio DA doc field `action`: "no_reply" xu ly
+// tu Giai doan 5b (bo qua say()); "end_call"/"transfer_to_agent" gio da noi
+// vao src/integrations/realtime-calls-api.js THAT (hangupCall/referCall) qua
+// 2 tham so factory moi cua createToolDispatcher() - `onEndCall`/
+// `onTransferToAgent` - CHI duoc goi SAU KHI da nhan dung tin hieu response-
+// ended cua CHINH cau tam biet/thong bao (khong doan bang timer co dinh nhu
+// ban cu). Xem chu thich day du trong dispatch-tool-call.js (tim "Giai doan
+// 8"). Module NAY (call-control.js) khong doi gi ve mat kien truc - van CHI
+// tra du lieu/action, khong tu goi API nao ca, dung ranh gioi da dat ra.
 // ============================================================================
 //
 // GIU NGUYEN nghiep vu THAT khac (khong doan, port dung tu ban cu):
@@ -131,11 +133,25 @@ export function createCallControlHandlers({ getAvailableAgents, baoSuCo, log = (
     };
   }
 
+  // [them 25/08/2026, Giai doan 8, chu du an quyet dinh: EP cau kich ban co
+  // dinh thay vi de model tu do] Truoc ban sua nay, handleEndCall() KHONG co
+  // `doc_cho_khach` (khac han handleTransferToAgent o tren) - dispatch-tool-
+  // call.js#sayForOutput() vi vay roi xuong say() mode "auto", de model TU
+  // DIEN DAT loi tam biet. Doc lai ban cu (voice_bot/src/session-ws.js,
+  // nhanh action==="end_call") xac nhan: ban cu LUON ep 1 cau tam biet CO
+  // DINH khi response chua end_call khong sẵn co audio - dung cau CHINH XAC
+  // ban cu da dung (thuong hieu, khong doan lai). Gio ep NGAY TU DAU (khong
+  // can kiem tra "co san audio chua" nhu ban cu - kien truc moi
+  // (dispatch-tool-call.js#sayForOutput) LUON tu goi 1 say() rieng cho MOI
+  // tool-call, khong bao gio de model tu ghep loi trong CHINH response chua
+  // function_call nhu ban cu tung cho phep, nen khong con truong hop "da co
+  // san audio" de kiem tra nua).
   function handleEndCall({ ly_do } = {}) {
     log("info", `call-control: end_call ly_do=${ly_do ?? "(khong co)"}`);
     return {
       success: true,
       action: "end_call",
+      doc_cho_khach: "Dạ, em cảm ơn Quý Khách đã gọi đến Tổng đài Công ty Cổ phần Cấp nước Trung An. Kính chào Quý Khách ạ.",
       message: "Kết thúc cuộc gọi.",
       ly_do: ly_do || "Khách hàng đã được hỗ trợ xong",
     };

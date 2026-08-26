@@ -71,10 +71,53 @@
 //     rot mat chi tiet bat buoc (dia chi van phong, giay to bat buoc - da
 //     tung la loi that o ban cu, xem comment trong procedures.js).
 //   - Khong co ca 2 field tren -> giu hanh vi cu: say({mode:"auto"}).
-// CO Y CHUA XU LY: action:"end_call"/"transfer_to_agent" - can goi API
-// that de cup/chuyen may (SIP that, Giai doan 8 chua toi) nen tam thoi
-// VAN goi say() nhu binh thuong cho 2 action nay (giong nhu khong co
-// action gi ca) - se xu ly khi noi SIP that.
+// [CAP NHAT 25/08/2026, Giai doan 8 - DA XU LY, giu doan van cu tren de nho
+// lich su] action:"end_call"/"transfer_to_agent" gio DA noi vao API that
+// (src/integrations/realtime-calls-api.js#hangupCall/referCall) - xem khoi
+// comment rieng "Giai doan 8" ngay duoi day cho thiet ke day du. Tom tat: 2
+// action nay VAN di qua sayForOutput() nhu truoc (khong doi cach noi - gio
+// ca 2 tool (call-control.js#handleEndCall/handleTransferToAgent) DEU co
+// san doc_cho_khach nen se doc dung kich ban co dinh, khong con roi ve say()
+// mode "auto"), CHI THEM 1 buoc: sau khi CHINH response do (cau tam biet/
+// thong bao) THAT SU ket thuc (tin hieu response-ended cua NO), moi goi
+// hangupCall()/referCall() that qua 2 hook `onEndCall`/`onTransferToAgent`
+// (optional, factory param moi).
+//
+// ============================================================================
+// GIAI DOAN 8 - noi end_call/transfer_to_agent vao Realtime Calls API THAT:
+// ============================================================================
+// VAN DE: turnController.say() KHONG tra ve responseId (chi tra ve so
+// `generation` noi bo cua turn-controller.js, khong lo ra ngoai) - o day CAN
+// biet DUNG responseId cua cau tam biet/thong bao moi goi de cho DUNG tin
+// hieu response-ended cua NO (khong phai response chua tool-call goc, cung
+// khong duoc doan bang timer co dinh nhu ban cu - xem giai thich dai trong
+// src/integrations/realtime-calls-api.js ve 2 setTimeout da bi bo).
+//
+// CACH GIAI (don gian, khong sua turn-controller.js - module do da on dinh/
+// duoc test ky tu Giai doan 3, tranh dung cham khong can thiet): dispatch-
+// tool-call.js#handleSignal() gio LANG NGHE THEM kind "response-started"
+// (truoc day bo qua im lang). Ngay khi sayForOutput() biet output.action la
+// "end_call"/"transfer_to_agent" VA co hook tuong ung, dat co
+// `awaitingActionResponseId = true` + nho lai hanh dong vao
+// `pendingCallAction`. response-started KE TIEP ma dispatcher nhan duoc se
+// duoc coi LA CHINH response do (dung DUNG thu tu FIFO ma turn-controller.js
+// da dua vao thiet ke cua no - xem giai thich hang doi trong turn-
+// controller.js) - gia dinh nay AN TOAN trong pham vi module nay vi
+// sayForOutput() la NOI DUY NHAT trong 1 chu ky tool-call goi say() sau khi
+// dat co, khong co say() nao khac chen ngang tu chinh dispatcher nay giua
+// luc dat co va luc response-started ke tiep toi (danhBoFlow la luong RIENG,
+// khong bao gio chay dong thoi voi 1 tool-call end_call/transfer_to_agent DA
+// THANH CONG trong CUNG 1 chu ky). Luu actionResponseId, roi CHO response-
+// ended cua DUNG id do moi thuc su goi onEndCall()/onTransferToAgent().
+//
+// [gioi han da biet, CHUA duoc kiem chung qua API that - ghi ro thay vi im
+// lang, giong quy uoc cac gia dinh khac trong file nay] Neu 1 nguon nao do
+// KHAC (vd model tu y goi tool khac, hoac 1 code path khac tu goi say())
+// chen 1 response.create giua luc dat co va response-started ke tiep, co
+// nay se gan NHAM actionResponseId cho response SAI - can checkpoint chay
+// that (scripts/checkpoint-giai-doan-8-*.mjs, chua viet) de xac nhan gia
+// dinh nay dung trong dieu kien that truoc khi dua vao san xuat.
+// ============================================================================
 //
 // [fix 23/08/2026 #2, phat hien BANG checkpoint-giai-doan-5b.mjs/-audio.mjs
 // chay THAT voi tongdai-api.js that (KHONG phai doan)] Ban dau (fix o
@@ -251,6 +294,14 @@ export function createToolDispatcher({
   handlers = {},
   danhBoFlow = null,
   now = () => Date.now(),
+  // [them 25/08/2026, Giai doan 8] Optional - khong truyen thi giu NGUYEN
+  // hanh vi cu (chi noi loi tam biet/thong bao, KHONG cup/chuyen may that) -
+  // xem khoi comment "GIAI DOAN 8" dau file. async (lyDo) => void, ben goi
+  // (server.js/checkpoint that, chua viet) tu bind san callId cua cuoc goi:
+  //   onEndCall: (lyDo) => hangupCall(callId),
+  //   onTransferToAgent: (lyDo) => referCall(callId, AGENT_QUEUE_URI),
+  onEndCall = null,
+  onTransferToAgent = null,
 } = {}) {
   // responseId -> { ended, hasOutput, output, name, rawArgs } - xem ghi chu
   // fix 23/08/2026 #2 tren day. Thay Map "output don gian" cu (khong con du
@@ -265,6 +316,16 @@ export function createToolDispatcher({
   // (start() bi bo qua neu dang arming/asking/confirming) - khop dung
   // "1 dispatcher = toi da 1 danhBoFlow dang cho retry" tai 1 thoi diem.
   let pendingDanhBoRetry = null;
+
+  // [them 25/08/2026, Giai doan 8] Xem khoi comment "GIAI DOAN 8" dau file.
+  // pendingCallAction: {kind:"end_call"|"transfer_to_agent", lyDo} cua hanh
+  // dong CHO cau tam biet/thong bao noi xong, null neu khong co gi dang cho.
+  // awaitingActionResponseId: true = response-started KE TIEP nhan duoc se
+  // duoc gan cho pendingCallAction nay. actionResponseId: id THAT (sau khi
+  // da biet) cua response can cho response-ended.
+  let pendingCallAction = null;
+  let awaitingActionResponseId = false;
+  let actionResponseId = null;
 
   // [them 24/08/2026 #7] Dem so lan da tu dong moi khach doc LAI ma danh bo vi
   // LAN GOI LAI tool (sau khi xac nhan xong) that bai voi loi DU LIEU (xem
@@ -324,12 +385,47 @@ export function createToolDispatcher({
       log("info", 'dispatch-tool-call: tool tra ve action:"no_reply" - KHONG goi say(), de model im lang cho khach noi tiep');
       return;
     }
+
+    // [them 25/08/2026, Giai doan 8] Xem khoi comment "GIAI DOAN 8" dau file
+    // cho ly do KHONG return o day (van can chay tiep xuong doc_cho_khach/
+    // say() ben duoi de THAT SU noi cau tam biet/thong bao - o day CHI dat
+    // co "dang cho response nay noi xong" truoc khi say() duoc goi).
+    if (output?.action === "end_call" || output?.action === "transfer_to_agent") {
+      const hook = output.action === "end_call" ? onEndCall : onTransferToAgent;
+      if (hook) {
+        pendingCallAction = { kind: output.action, lyDo: output.ly_do };
+        awaitingActionResponseId = true;
+        log("info", `dispatch-tool-call: tool tra ve action:"${output.action}" - se goi API that (${output.action === "end_call" ? "hangupCall" : "referCall"}) sau khi cau tam biet/thong bao noi xong`);
+      } else {
+        log("warn", `dispatch-tool-call: tool tra ve action:"${output.action}" nhung KHONG co hook tuong ung duoc truyen vao createToolDispatcher() - chi noi loi, KHONG goi API that (giu hanh vi cu)`);
+      }
+    }
+
     if (output?.doc_cho_khach) {
       log("info", "dispatch-tool-call: tool co doc_cho_khach - goi say(mode:verbatim) doc nguyen van, khong de model tu dien dat");
       turnController.say({ mode: "verbatim", text: output.doc_cho_khach });
       return;
     }
     turnController.say();
+  }
+
+  // [them 25/08/2026, Giai doan 8] Goi THAT sau khi da xac nhan dung tin
+  // hieu response-ended cua cau tam biet/thong bao - xem handleSignal() ben
+  // duoi. Bat loi rieng (khong throw ra ngoai) - dung nguyen tac BAT BUOC
+  // cua module nay: loi o day khong duoc lam sap cuoc goi (hangup/refer that
+  // bai thi da khong con gi lam them duoc nua, chi con cach log lai).
+  async function fireCallAction(action) {
+    try {
+      if (action.kind === "end_call" && onEndCall) {
+        await onEndCall(action.lyDo);
+        log("info", "dispatch-tool-call: da goi onEndCall() (hangupCall that) sau khi cau tam biet noi xong");
+      } else if (action.kind === "transfer_to_agent" && onTransferToAgent) {
+        await onTransferToAgent(action.lyDo);
+        log("info", "dispatch-tool-call: da goi onTransferToAgent() (referCall that) sau khi cau thong bao noi xong");
+      }
+    } catch (err) {
+      log("error", `dispatch-tool-call: ${action.kind} that bai: ${err.message}`);
+    }
   }
 
   // Tra + goi dung 1 tool, LUON tra ve 1 object output (khong bao gio
@@ -420,7 +516,40 @@ export function createToolDispatcher({
       return;
     }
 
+    // [them 25/08/2026, Giai doan 8] Xem khoi comment "GIAI DOAN 8" dau file.
+    // PHAI dat TRUOC nhanh "tool-call-requested" o duoi trong thu tu code
+    // (khong quan trong ve mat chay - day la nhanh if/else if rieng theo
+    // signal.kind) nhung dat o day (ngay sau "response-started" concept) de
+    // doc theo dung mach: dat co -> nhan response-started -> nhan response-
+    // ended cua DUNG id do.
+    if (signal.kind === "response-started") {
+      if (awaitingActionResponseId) {
+        actionResponseId = signal.responseId;
+        awaitingActionResponseId = false;
+        log(
+          "info",
+          `dispatch-tool-call: response ${signal.responseId} la cau tam biet/thong bao (${pendingCallAction?.kind}) - cho response-ended cua CHINH no roi moi goi API that`,
+        );
+      }
+      return;
+    }
+
     if (signal.kind === "response-ended") {
+      // [them 25/08/2026, Giai doan 8] Kiem tra TRUOC ca nhanh `pending`
+      // (tool-call) ben duoi - day la response KHAC (cau tam biet/thong
+      // bao), khong nam trong Map `pending` (Map do chi khoa boi responseId
+      // cua response CHUA tool-call goc).
+      if (actionResponseId !== null && signal.responseId === actionResponseId) {
+        const action = pendingCallAction;
+        actionResponseId = null;
+        pendingCallAction = null;
+        if (action) {
+          log("info", `dispatch-tool-call: response ${signal.responseId} (cau tam biet/thong bao) da noi xong - goi ${action.kind} THAT`);
+          fireCallAction(action);
+        }
+        return;
+      }
+
       const entry = pending.get(signal.responseId);
       if (!entry) return;
       if (entry.hasOutput) {

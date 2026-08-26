@@ -1131,16 +1131,67 @@ cho cả lộ trình này:
   thiếu secret). Tổng 313/313 pass cục bộ, không hồi quy. `.env.example` bổ
   sung `OPENAI_PROJECT_ID`/`OPENAI_WEBHOOK_SECRET`/`WEBHOOK_PATH`.
 
-  Còn lại (chưa làm, cần cuộc gọi SIP thật để kiểm chứng - không phải quên):
-  viết `server.js` thật (Express nhận webhook, gọi `acceptCall` với
-  `sessionFields` - phụ thuộc phần system-prompt.js còn lại của Giai đoạn 5,
-  hiện CHƯA viết); sửa `session-ws.js`/`connectRealtimeSession()` để hỗ trợ
-  connect bằng `call_id` (hiện chỉ hỗ trợ `?model=...`); nối
-  `action:"end_call"`/`"transfer_to_agent"` ở `dispatch-tool-call.js` vào
-  `hangupCall()`/`referCall()` thật, chờ đúng tín hiệu `"response-ended"`
-  trước khi gọi (không dùng timer cố định như bản cũ); sau đó mới chạy thật
-  qua hạ tầng SIP có sẵn (chủ dự án xác nhận đã có Asterisk trunk + webhook
-  public đang chạy bản cũ, có thể tạm trỏ sang bản mới khi cần test thật).
+  **Cập nhật 25/08/2026 #2 - làm nốt 2/3 việc còn lại (chủ dự án chọn "tiếp
+  tục luôn"): `session-ws.js` hỗ trợ connect bằng `call_id`, nối
+  `end_call`/`transfer_to_agent` vào `hangupCall()`/`referCall()` thật.**
+
+  1. `src/session/session-ws.js#connectRealtimeSession()`: thêm tham số
+     `callId` (loại trừ lẫn nhau với `model`). Đọc lại `voice_bot/src/
+     session-ws.js` (bản cũ, `openSessionWebSocket`) xác nhận: dù nối qua
+     SIP, bản cũ VẪN gửi 1 `session.update` lúc WS "open" - NHƯNG chỉ để
+     đổi `turn_detection` (`semantic_vad`/`eagerness:"low"`/`create_response:
+     true` - khớp CHÍNH XÁC `buildTurnDetectionConfig("normal")` đã có sẵn),
+     KHÔNG gửi lại `transcription`/`tools`/`voice` (đã set qua REST `accept()`
+     rồi). Nhánh `callId` mới vì vậy CHỈ gửi đúng 1 `session.update` hẹp
+     (turn_detection), khác nhánh `model` cũ (gửi đủ transcription+turn_
+     detection+tools). Không có unit test riêng cho `connectRealtimeSession()`
+     (đúng quy ước đã ghi từ Giai đoạn 4 - cần mạng thật, chỉ xác nhận qua
+     checkpoint chạy thật) - chỉ xác nhận `node --check` + không hồi quy 313
+     test cũ (chỉ test `createSessionWs`/`buildTurnDetectionConfig`, không
+     đụng nhánh mới).
+
+  2. `src/domain/call-control.js#handleEndCall()`: thêm `doc_cho_khach` cố
+     định (chủ dự án chọn qua AskUserQuestion: ép kịch bản thay vì để model
+     tự do) - dùng ĐÚNG câu bản cũ ("Dạ, em cảm ơn Quý Khách đã gọi đến Tổng
+     đài Công ty Cổ phần Cấp nước Trung An. Kính chào Quý Khách ạ."). Khác
+     bản cũ: không cần kiểm tra "response có sẵn audio chưa" (`_hasGoodbyeAudio`)
+     vì kiến trúc mới (`sayForOutput()`) luôn tự gọi 1 `say()` riêng cho mỗi
+     tool-call, không có trường hợp model tự chèn audio vào CHÍNH response
+     chứa function_call như bản cũ từng cho phép.
+
+  3. `src/call-flow/dispatch-tool-call.js`: thêm 2 hook optional
+     `onEndCall(lyDo)`/`onTransferToAgent(lyDo)` cho `createToolDispatcher()`
+     (không truyền → giữ nguyên 100% hành vi cũ, mọi test cũ không sửa vẫn
+     pass). Vấn đề kỹ thuật: `turnController.say()` không trả về `responseId`
+     (chỉ trả `generation` nội bộ) - cần biết ĐÚNG response nào là câu tạm
+     biệt/thông báo để chờ đúng tín hiệu `"response-ended"` của NÓ (không đoán
+     bằng timer cố định như bản cũ - bản cũ dùng `setTimeout` 5000-8000ms cho
+     end_call, 2000-5000ms cho transfer, xem `_handleTransfer()`/nhánh
+     `action==="end_call"` trong `voice_bot/src/session-ws.js`). Giải: `handleSignal()`
+     lắng nghe thêm `"response-started"` (trước đây bỏ qua) - đặt cờ
+     `awaitingActionResponseId` ngay khi `sayForOutput()` biết action là
+     end_call/transfer_to_agent, response-started KẾ TIẾP nhận được được coi
+     là ĐÚNG response đó (dựa vào thứ tự FIFO mà turn-controller.js đã đảm
+     bảo), rồi chờ response-ended CỦA ĐÚNG id đó mới gọi hook thật. Giới hạn
+     đã biết (ghi rõ trong code, CHƯA kiểm chứng qua API thật): nếu có
+     response.create khác chen vào giữa lúc đặt cờ và response-started kế
+     tiếp, cờ sẽ gán nhầm - cần checkpoint thật (chưa viết) để xác nhận trước
+     khi đưa vào sản xuất.
+
+  Test: `test/call-control.test.mjs` cập nhật (deepEqual thêm `doc_cho_khach`)
+  + `test/dispatch-tool-call.test.mjs` thêm 5 test mới (end_call có/không hook,
+  transfer_to_agent có hook, hook throw lỗi không làm sập handleSignal, tool
+  khác không bị ảnh hưởng bởi cờ chờ). `.env.example` bổ sung `AGENT_QUEUE_URI`
+  (đích SIP REFER, port từ `_handleTransfer()` bản cũ - cố định cho cả dự án,
+  không tra theo agent rảnh). Tổng 319/319 pass cục bộ, không hồi quy.
+
+  Còn lại (chưa làm, không phải quên): viết `server.js` thật (Express nhận
+  webhook, gọi `acceptCall` với `sessionFields`) - phụ thuộc phần system-
+  prompt.js còn lại của Giai đoạn 5 (tra hóa đơn/thủ tục/chuyển máy/để lại lời
+  nhắn chưa có prompt tổng hợp), CHƯA viết; sau đó mới chạy thật qua hạ tầng
+  SIP có sẵn (chủ dự án xác nhận đã có Asterisk trunk + webhook public đang
+  chạy bản cũ, có thể tạm trỏ sang bản mới khi cần test thật) để kiểm chứng
+  giả định thứ tự FIFO ở mục 3 trên.
 
 - [ ] **Giai đoạn 9 - Đối chiếu với bộ test cũ.** Chuyển/thích nghi 4 file
   trong `test_case/*.test.mjs` của bản cũ (`danh_bo_20260726`,

@@ -174,9 +174,16 @@ test("handleEndCall: co ly_do -> giu nguyen ly_do", () => {
   assert.deepEqual(out, {
     success: true,
     action: "end_call",
+    doc_cho_khach: "Dạ, em cảm ơn Quý Khách đã gọi đến Tổng đài Công ty Cổ phần Cấp nước Trung An. Kính chào Quý Khách ạ.",
     message: "Kết thúc cuộc gọi.",
     ly_do: "Khách cảm ơn và tạm biệt",
   });
+});
+
+test("handleEndCall: co doc_cho_khach CO DINH (Giai doan 8, chu du an quyet dinh ep kich ban) - khong de model tu dien loi tam biet", () => {
+  const { handlers } = makeFakes({});
+  const out = handlers.handleEndCall({ ly_do: "x" });
+  assert.equal(out.doc_cho_khach, "Dạ, em cảm ơn Quý Khách đã gọi đến Tổng đài Công ty Cổ phần Cấp nước Trung An. Kính chào Quý Khách ạ.");
 });
 
 test("handleEndCall: khong co ly_do -> dung cau mac dinh", () => {

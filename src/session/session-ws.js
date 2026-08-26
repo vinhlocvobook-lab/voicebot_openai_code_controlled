@@ -139,6 +139,19 @@ export function createSessionWs({ ws, log = () => {} } = {}) {
 export function connectRealtimeSession({
   apiKey,
   model,
+  // [them 25/08/2026, Giai doan 8] callId: THAY THE cho `model` khi ket noi
+  // qua SIP that (OpenAI Realtime Calls API) - loai tru lan nhau, chi truyen
+  // DUNG 1 trong 2. Xac nhan bang doc lai voice_bot/src/session-ws.js (ban
+  // cu) ham openSessionWebSocket(): URL doi thanh
+  // wss://api.openai.com/v1/realtime?call_id={callId} (khac ?model=...), va
+  // model/instructions/tools/reasoning/audio.output.voice/audio.input.
+  // transcription DA duoc gui qua REST accept() TRUOC khi mo WS nay (xem
+  // src/integrations/realtime-calls-api.js#acceptCall) - session.update gui
+  // luc WS "open" o nhanh callId vi vay CHI con doi turn_detection (accept()
+  // body khong co truong nay), KHONG gui lai transcription/tools/voice nhu
+  // nhanh model (se de lai 2 noi dinh nghia trung lap, co the lech nhau qua
+  // thoi gian).
+  callId,
   transcribeModel,
   transcribeLanguage,
   transcribePrompt,
@@ -147,6 +160,8 @@ export function connectRealtimeSession({
   // Xac nhan bang du lieu that o scripts/probe-tool-call.mjs: tool-call
   // KHONG phai 1 lifecycle rieng, chi la them field `tools` vao
   // session.update - khong can sua gi khac o day.
+  // [Giai doan 8] O nhanh callId, tools/toolChoice KHONG duoc dung o day
+  // (da gui qua REST accept() roi) - chi con y nghia cho nhanh model.
   tools,
   toolChoice,
   log = () => {},
@@ -154,10 +169,13 @@ export function connectRealtimeSession({
   WebSocketImpl,
 } = {}) {
   if (!apiKey) throw new Error("session-ws: thieu apiKey");
-  if (!model) throw new Error("session-ws: thieu model");
+  if (!model && !callId) throw new Error("session-ws: can truyen 1 trong 2: model (ket noi truc tiep, Giai doan 1-7) hoac callId (SIP that qua Realtime Calls API, Giai doan 8)");
+  if (model && callId) throw new Error("session-ws: chi duoc truyen 1 trong 2 model/callId, khong duoc truyen ca hai");
   if (!WebSocketImpl) throw new Error("session-ws: thieu WebSocketImpl (truyen vao thu vien 'ws')");
 
-  const url = `wss://api.openai.com/v1/realtime?model=${encodeURIComponent(model)}`;
+  const url = callId
+    ? `wss://api.openai.com/v1/realtime?call_id=${encodeURIComponent(callId)}`
+    : `wss://api.openai.com/v1/realtime?model=${encodeURIComponent(model)}`;
   const ws = new WebSocketImpl(url, { headers: { Authorization: `Bearer ${apiKey}` } });
   const sessionWs = createSessionWs({ ws, log });
 
@@ -167,6 +185,20 @@ export function connectRealtimeSession({
   });
 
   ws.on("open", () => {
+    // [them 25/08/2026, Giai doan 8] Nhanh callId (SIP that) - xem ghi chu
+    // dai o tham so `callId` phia tren. Chi 1 session.update RIENG, CHI doi
+    // turn_detection - dung lai buildTurnDetectionConfig("normal") giong
+    // het nhanh model, tranh 2 noi dinh nghia "normal" lech nhau.
+    if (callId) {
+      const sessionUpdate = {
+        type: "session.update",
+        session: { type: "realtime", audio: { input: { turn_detection: buildTurnDetectionConfig("normal") } } },
+      };
+      ws.send(JSON.stringify(sessionUpdate));
+      log("out", sessionUpdate);
+      return;
+    }
+
     const sessionUpdate = {
       type: "session.update",
       session: {

@@ -932,3 +932,133 @@ test("runTool() dung doc lap (khong can send/turnController gia) - tien ich khi 
   const notFound = await dispatcher.runTool("khong_ton_tai", "{}");
   assert.equal(notFound.error_code, "TOOL_NOT_FOUND");
 });
+
+// ─── Giai doan 8 - onEndCall/onTransferToAgent (noi hangupCall/referCall THAT) ─
+//
+// Kich ban chung ca 2: tool-call-requested (action end_call/transfer_to_agent,
+// co doc_cho_khach) -> response-ended CUA TOOL-CALL GOC -> say(verbatim) duoc
+// goi (cau tam biet/thong bao) NHUNG hook (onEndCall/onTransferToAgent) CHUA
+// duoc goi -> response-started (id MOI, cua CHINH cau tam biet) -> response-
+// ended (DUNG id do) -> LUC NAY hook moi duoc goi.
+
+test("action:end_call, CO onEndCall -> say(verbatim doc_cho_khach) truoc, onEndCall CHI duoc goi SAU KHI response cua CHINH cau tam biet ket thuc (khong phai response goc)", async () => {
+  const endCallCalls = [];
+  const { dispatcher, sayCalls } = makeFakes(
+    { end_call: async (args) => ({ success: true, action: "end_call", doc_cho_khach: "Tạm biệt Quý Khách.", message: "Kết thúc cuộc gọi.", ly_do: args.ly_do }) },
+    { onEndCall: async (lyDo) => endCallCalls.push(lyDo) },
+  );
+
+  await dispatcher.handleSignal({
+    kind: "tool-call-requested",
+    responseId: "resp_toolcall",
+    callId: "call_1",
+    name: "end_call",
+    arguments: '{"ly_do":"Khách cảm ơn"}',
+  });
+  // response-ended CUA response CHUA tool-call goc - sayForOutput() duoc goi,
+  // say(verbatim) da gui NHUNG onEndCall CHUA duoc goi (con phai cho response
+  // MOI - cau tam biet - ket thuc).
+  await dispatcher.handleSignal({ kind: "response-ended", responseId: "resp_toolcall", status: "completed" });
+  assert.equal(sayCalls.length, 1);
+  assert.deepEqual(sayCalls[0], { mode: "verbatim", text: "Tạm biệt Quý Khách." });
+  assert.equal(endCallCalls.length, 0, "onEndCall CHUA duoc goi - con doi cau tam biet noi xong");
+
+  // response-started cua CHINH response chua cau tam biet (id MOI, KHAC
+  // resp_toolcall) - dispatcher phai tu ghi nhan day la response can cho.
+  await dispatcher.handleSignal({ kind: "response-started", responseId: "resp_goodbye" });
+  assert.equal(endCallCalls.length, 0, "response-started thoi chua du - phai cho response-ended");
+
+  // response-ended cua 1 response KHAC (khong phai resp_goodbye) - khong duoc
+  // kich hoat nham.
+  await dispatcher.handleSignal({ kind: "response-ended", responseId: "resp_khong_lien_quan", status: "completed" });
+  assert.equal(endCallCalls.length, 0, "response-ended SAI id khong duoc kich hoat onEndCall");
+
+  // response-ended DUNG id cua cau tam biet - onEndCall PHAI duoc goi dung 1 lan.
+  await dispatcher.handleSignal({ kind: "response-ended", responseId: "resp_goodbye", status: "completed" });
+  assert.deepEqual(endCallCalls, ["Khách cảm ơn"]);
+
+  // Goi lai response-ended cung id 1 lan nua (vd trung lap tu OpenAI) -
+  // khong duoc goi onEndCall them lan nua (state da duoc don sau lan dau).
+  await dispatcher.handleSignal({ kind: "response-ended", responseId: "resp_goodbye", status: "completed" });
+  assert.equal(endCallCalls.length, 1, "khong duoc goi onEndCall lan 2 tu response-ended trung lap");
+});
+
+test("action:end_call, KHONG co onEndCall -> giu hanh vi cu (chi noi loi tam biet, khong throw, khong co gi de goi)", async () => {
+  const { dispatcher, sayCalls, logCalls } = makeFakes({
+    end_call: async () => ({ success: true, action: "end_call", doc_cho_khach: "Tạm biệt Quý Khách.", message: "Kết thúc cuộc gọi." }),
+  });
+
+  await dispatcher.handleSignal({ kind: "tool-call-requested", responseId: "r1", callId: "c1", name: "end_call", arguments: "{}" });
+  await dispatcher.handleSignal({ kind: "response-ended", responseId: "r1", status: "completed" });
+  assert.equal(sayCalls.length, 1, "van phai noi loi tam biet nhu binh thuong");
+  assert.ok(logCalls.some((l) => l.level === "warn" && /end_call.*KHONG co hook/.test(l.msg)));
+
+  // response-started/ended tiep theo khong duoc lam gi ca (khong co gi dang cho).
+  await assert.doesNotReject(async () => {
+    await dispatcher.handleSignal({ kind: "response-started", responseId: "r2" });
+    await dispatcher.handleSignal({ kind: "response-ended", responseId: "r2", status: "completed" });
+  });
+});
+
+test("action:transfer_to_agent, CO onTransferToAgent -> dung DUNG co che cho response-ended cua cau thong bao, giong het end_call", async () => {
+  const transferCalls = [];
+  const { dispatcher, sayCalls } = makeFakes(
+    {
+      transfer_to_agent: async (args) => ({
+        success: true,
+        action: "transfer_to_agent",
+        doc_cho_khach: "Dạ, em xin phép chuyển máy cho tổng đài viên hỗ trợ Quý Khách ngay ạ.",
+        message: "Đang chuyển máy.",
+        ly_do: args.ly_do,
+      }),
+    },
+    { onTransferToAgent: async (lyDo) => transferCalls.push(lyDo) },
+  );
+
+  await dispatcher.handleSignal({
+    kind: "tool-call-requested",
+    responseId: "resp_toolcall",
+    callId: "call_1",
+    name: "transfer_to_agent",
+    arguments: '{"ly_do":"Khách muốn gặp người thật"}',
+  });
+  await dispatcher.handleSignal({ kind: "response-ended", responseId: "resp_toolcall", status: "completed" });
+  assert.equal(sayCalls.length, 1);
+  assert.equal(transferCalls.length, 0);
+
+  await dispatcher.handleSignal({ kind: "response-started", responseId: "resp_thong_bao" });
+  await dispatcher.handleSignal({ kind: "response-ended", responseId: "resp_thong_bao", status: "completed" });
+  assert.deepEqual(transferCalls, ["Khách muốn gặp người thật"]);
+});
+
+test("onEndCall throw loi - KHONG throw ra ngoai handleSignal(), chi log('error')", async () => {
+  const { dispatcher, logCalls } = makeFakes(
+    { end_call: async () => ({ success: true, action: "end_call", doc_cho_khach: "Tạm biệt." }) },
+    { onEndCall: async () => { throw new Error("OpenAI tra ve 500"); } },
+  );
+
+  await dispatcher.handleSignal({ kind: "tool-call-requested", responseId: "r1", callId: "c1", name: "end_call", arguments: "{}" });
+  await dispatcher.handleSignal({ kind: "response-ended", responseId: "r1", status: "completed" });
+  await dispatcher.handleSignal({ kind: "response-started", responseId: "r2" });
+
+  await assert.doesNotReject(() => dispatcher.handleSignal({ kind: "response-ended", responseId: "r2", status: "completed" }));
+  assert.ok(logCalls.some((l) => l.level === "error" && /end_call that bai/.test(l.msg)));
+});
+
+test("tool KHAC (vd get_bill, khong co action end_call/transfer_to_agent) - KHONG dat co cho, response-started/ended sau do khong bi anh huong gi ca", async () => {
+  const endCallCalls = [];
+  const { dispatcher, sayCalls } = makeFakes(
+    { get_bill: async () => ({ success: true, data: [{ tong_tien: 100000 }] }) },
+    { onEndCall: async (lyDo) => endCallCalls.push(lyDo) },
+  );
+
+  await dispatcher.handleSignal({ kind: "tool-call-requested", responseId: "r1", callId: "c1", name: "get_bill", arguments: "{}" });
+  await dispatcher.handleSignal({ kind: "response-ended", responseId: "r1", status: "completed" });
+  assert.equal(sayCalls.length, 1, "say() mode auto binh thuong (khong co doc_cho_khach o get_bill gia lap nay)");
+
+  // Khong co gi dang "cho" ca - response-started/ended bat ky sau do khong
+  // duoc lam gi (khong goi onEndCall nham).
+  await dispatcher.handleSignal({ kind: "response-started", responseId: "r2" });
+  await dispatcher.handleSignal({ kind: "response-ended", responseId: "r2", status: "completed" });
+  assert.equal(endCallCalls.length, 0);
+});
